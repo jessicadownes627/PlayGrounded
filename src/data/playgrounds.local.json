@@ -1,0 +1,16 @@
+{
+  "id": "heckscher-huntington",
+  "name": "Heckscher Park Playground",
+  "address": "2 Prime Ave, Huntington, NY",
+  "lat": 40.8743,
+  "lng": -73.4122,
+  "fenced": false,
+  "dogsAllowed": true,
+  "bathrooms": true,
+  "shade": "Partial",
+  "parking": "Moderate",
+  "lighting": "Well-lit",
+  "notes": "Gets busy on baseball days; small toddler area.",
+  "city": "Huntington",
+  "state": "NY"
+}

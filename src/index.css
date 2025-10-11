@@ -1,0 +1,69 @@
+@import url('https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body {
+  @apply bg-gradient-to-b from-[#bde0fe] via-[#dfffd9] to-[#fff7ae] text-[#1b4332] font-[Nunito];
+}
+
+/* Add a soft floating animation */
+@keyframes float {
+  0%, 100% {
+    transform: translateY(0px);
+  }
+  50% {
+    transform: translateY(-8px);
+  }
+}
+
+h1 {
+  @apply text-4xl font-extrabold text-[#1b4332] mb-2;
+}
+
+button {
+  @apply transition-all duration-300;
+}
+
+button:hover {
+  transform: scale(1.03);
+}
+
+footer {
+  animation: float 6s ease-in-out infinite;
+}
+
+/* Optional: gentle shadow under cards */
+.card-shadow {
+  box-shadow: 0 4px 20px rgba(50, 115, 80, 0.15);
+}
+@keyframes sunshinePulse {
+  0% {
+    transform: scale(1);
+    opacity: 0.9;
+  }
+  50% {
+    transform: scale(1.3);
+    opacity: 0.4;
+  }
+  100% {
+    transform: scale(1);
+    opacity: 0.9;
+  }
+}
+
+.animate-sunshine {
+  animation: sunshinePulse 2s infinite;
+}
+.live-look-item {
+  background: rgba(255,255,255,0.55);
+  border-left: 4px solid #ffec70;
+  border-radius: 0.75rem;
+  padding: 0.5rem 0.75rem;
+  margin-bottom: 0.4rem;
+  box-shadow: inset 0 0 6px rgba(255,255,255,0.4);
+}
+.live-look-item:hover {
+  background: rgba(255,255,255,0.75);
+}
