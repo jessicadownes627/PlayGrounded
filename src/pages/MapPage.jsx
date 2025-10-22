@@ -1,37 +1,68 @@
 // src/pages/MapPage.jsx
 import React, { useEffect, useRef, useState } from "react";
-import { GoogleMap, OverlayView, useJsApiLoader } from "@react-google-maps/api";
+import {
+  GoogleMap,
+  OverlayView,
+  useJsApiLoader,
+} from "@react-google-maps/api";
+import { useLocation } from "react-router-dom";
 import ParkCard from "../components/ParkCard.jsx";
 import { fetchPlaygrounds } from "../data/fetchPlaygrounds";
+import haversine from "haversine-distance";
 
-const defaultCenter = { lat: 40.815, lng: -73.220 };
+const defaultCenter = { lat: 40.815, lng: -73.22 };
 
 export default function MapPage() {
   const [parks, setParks] = useState([]);
   const [selectedPark, setSelectedPark] = useState(null);
   const [center, setCenter] = useState(defaultCenter);
   const mapRef = useRef(null);
+  const location = useLocation();
+  const activeFilters = location.state?.filters || [];
 
   const { isLoaded } = useJsApiLoader({
     id: "google-map-script",
     googleMapsApiKey: import.meta.env.VITE_GOOGLE_MAPS_API_KEY,
   });
 
-  // 🎡 Load playgrounds
+  // 🎡 Load playground data
   useEffect(() => {
-    fetchPlaygrounds().then(setParks).catch(console.error);
+    fetchPlaygrounds()
+      .then((data) => {
+        console.log("✅ Loaded parks:", data.length);
+        setParks(data);
+      })
+      .catch(console.error);
   }, []);
 
-  // 📍 Center to user location
+  // 📍 Center on user
   useEffect(() => {
     if (!navigator.geolocation) return;
     navigator.geolocation.getCurrentPosition(
-      (pos) => setCenter({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
+      (pos) =>
+        setCenter({
+          lat: pos.coords.latitude,
+          lng: pos.coords.longitude,
+        }),
       () => {},
       { enableHighAccuracy: true, timeout: 5000 }
     );
   }, []);
 
+  // 🗺️ Fit bounds to parks
+  useEffect(() => {
+    if (parks.length && mapRef.current && window.google) {
+      const bounds = new window.google.maps.LatLngBounds();
+      parks.forEach((p) => {
+        const lat = Number(p.lat);
+        const lng = Number(p.lng);
+        if (!isNaN(lat) && !isNaN(lng)) bounds.extend({ lat, lng });
+      });
+      mapRef.current.fitBounds(bounds);
+    }
+  }, [parks]);
+
+  // 💬 Marker click handler
   const handleMarkerClick = (park) => {
     setSelectedPark(park);
     if (mapRef.current) {
@@ -44,14 +75,73 @@ export default function MapPage() {
     }, 250);
   };
 
+  // ⚙️ Feature helper
+  const hasFeature = (p, key) => {
+    const val = String(p[key] || p[`${key}Allowed`] || "").trim().toLowerCase();
+
+    // Lighting gets special logic
+    if (key === "lighting") {
+      if (["yes", "true", "✅", "full"].includes(val)) return 1; // full lighting
+      if (["some", "partial"].includes(val)) return 0.5; // half match
+      if (["no", "none", "dark"].includes(val)) return 0;
+      return 0;
+    }
+
+    return ["true", "yes", "y", "1", "✅", "checked"].includes(val);
+  };
+
+  // 📏 Distance helper (meters → miles)
+  const distanceMiles = (a, b) => haversine(a, b) / 1609.34;
+
+  // 🧩 Compute match + distance
+  const rankedParks = parks
+    .map((p) => {
+      const parkCoords = { lat: Number(p.lat), lng: Number(p.lng) };
+      const userCoords = center;
+      const dist = distanceMiles(parkCoords, userCoords);
+
+      // skip invalid coords
+      if (isNaN(parkCoords.lat) || isNaN(parkCoords.lng)) return null;
+
+      const selectedCount = activeFilters.length;
+      let score = 0;
+
+      activeFilters.forEach((f) => {
+        const val = hasFeature(p, f);
+        if (val === 1) score += 1;
+        else if (val === 0.5) score += 0.5;
+      });
+
+      const matchPercent =
+        selectedCount > 0 ? Math.round((score / selectedCount) * 100) : 100;
+
+      return { ...p, matchPercent, distance: dist };
+    })
+    .filter((p) => p && p.distance <= 15) // within 15 miles
+    .sort((a, b) => b.matchPercent - a.matchPercent || a.distance - b.distance);
+
+  // ☀️🏠 Emoji marker style
+  const getMarkerStyle = (park) => ({
+    fontSize: "20px",
+    transform: "translate(-50%, -50%)",
+    cursor: "pointer",
+    zIndex: 9999,
+    textShadow: "0 0 3px white",
+  });
+
   return (
     <div className="relative min-h-screen bg-gradient-to-b from-[#b7f3da] via-[#c7e9f9] to-[#9fd3f7] text-[#0e3325] font-[Nunito]">
-      {/* Header */}
       <header className="relative text-center pt-6 pb-3">
         <h1 className="text-3xl font-extrabold tracking-tight">PlayGrounded</h1>
         <p className="text-sm opacity-80">
-          Find the best places to play — with live, parent-powered updates.
+          Find the best places to play — ranked by your needs and nearby distance.
         </p>
+        {activeFilters.length > 0 && (
+          <p className="text-xs mt-2 opacity-70">
+            Showing within 15 miles, ranked by match:{" "}
+            {activeFilters.join(", ")}
+          </p>
+        )}
       </header>
 
       {/* Map */}
@@ -62,33 +152,51 @@ export default function MapPage() {
               mapContainerStyle={{ width: "100%", height: "100%" }}
               center={center}
               zoom={11}
-              onLoad={(m) => (mapRef.current = m)}
+              onLoad={(map) => (mapRef.current = map)}
               options={{
                 disableDefaultUI: true,
                 zoomControl: true,
                 styles: [
-                  { featureType: "poi.park", elementType: "geometry.fill", stylers: [{ color: "#D7F4DE" }] },
-                  { featureType: "water", elementType: "geometry.fill", stylers: [{ color: "#DCEEFE" }] },
+                  {
+                    featureType: "poi.park",
+                    elementType: "geometry.fill",
+                    stylers: [{ color: "#D7F4DE" }],
+                  },
+                  {
+                    featureType: "water",
+                    elementType: "geometry.fill",
+                    stylers: [{ color: "#DCEEFE" }],
+                  },
                 ],
               }}
             >
-              {parks.map((p) => (
-                <OverlayView
-                  key={p.id}
-                  position={{ lat: Number(p.lat), lng: Number(p.lng) }}
-                  mapPaneName={OverlayView.OVERLAY_MOUSE_TARGET}
-                >
-                  <div
-                    className={`cursor-pointer text-2xl transition-transform duration-200 ${
-                      selectedPark?.id === p.id ? "scale-125" : "scale-100"
-                    }`}
-                    onClick={() => handleMarkerClick(p)}
-                    title={p.name}
+              {rankedParks.map((p, i) => {
+                const lat = Number(p.lat);
+                const lng = Number(p.lng);
+                if (isNaN(lat) || isNaN(lng)) return null;
+
+                const isIndoor = String(p.indoorPlayArea)
+                  .trim()
+                  .toLowerCase()
+                  .includes("yes");
+                const emoji = isIndoor ? "🏠" : "☀️";
+
+                return (
+                  <OverlayView
+                    key={p.id || i}
+                    position={{ lat, lng }}
+                    mapPaneName={OverlayView.OVERLAY_MOUSE_TARGET}
                   >
-                    ☀️
-                  </div>
-                </OverlayView>
-              ))}
+                    <div
+                      style={getMarkerStyle(p)}
+                      onClick={() => handleMarkerClick(p)}
+                      title={p.name}
+                    >
+                      {emoji}
+                    </div>
+                  </OverlayView>
+                );
+              })}
             </GoogleMap>
           ) : (
             <div className="w-full h-full flex items-center justify-center text-sm opacity-70">
@@ -100,11 +208,15 @@ export default function MapPage() {
 
       {/* Park Cards */}
       <div className="relative px-4 py-6 grid gap-6 max-w-6xl mx-auto">
-        {parks.map((p) => (
+        {rankedParks.map((p) => (
           <div
             key={p.id}
             id={`park-${p.id}`}
-            className={selectedPark?.id === p.id ? "ring-2 ring-pink-300 rounded-3xl" : ""}
+            className={
+              selectedPark?.id === p.id
+                ? "ring-2 ring-pink-300 rounded-3xl"
+                : ""
+            }
           >
             <ParkCard park={p} isSelected={selectedPark?.id === p.id} />
           </div>

@@ -15,6 +15,11 @@ export default function Welcome() {
     }));
   };
 
+  // Reset all filters
+  const resetFilters = () => {
+    setFilters({});
+  };
+
   const options = [
     { emoji: "🧱", label: "Fenced In", key: "fenced" },
     { emoji: "🐾", label: "Allows Dogs", key: "dogs" },
@@ -22,6 +27,8 @@ export default function Welcome() {
     { emoji: "🌳", label: "Has Shade", key: "shade" },
     { emoji: "🚗", label: "Easy Parking", key: "parking" },
     { emoji: "💡", label: "Good Lighting", key: "lighting" },
+    { emoji: "♿️", label: "Adaptive Equipment", key: "adaptiveEquipment" },
+    { emoji: "🏠", label: "Indoor Play Area", key: "indoorPlayArea" },
   ];
 
   return (
@@ -37,37 +44,55 @@ export default function Welcome() {
         </p>
 
         <h2 className="text-lg font-semibold mb-4">
-          Find the PERFECT playground
+          Choose what matters most to your family
         </h2>
 
-        <div className="grid grid-cols-2 gap-4 mb-8">
+        {/* Feature filter grid */}
+        <div className="grid grid-cols-2 gap-3 mb-8">
           {options.map((f) => (
             <button
               key={f.key}
               onClick={() => toggleFilter(f.key)}
-              className={`rounded-xl py-3 px-4 shadow-sm transition-all duration-300 flex items-center justify-center space-x-2 ${
+              className={`rounded-xl py-3 px-3 shadow-sm transition-all duration-300 flex items-center justify-center space-x-2 ${
                 filters[f.key]
                   ? "bg-[#3ba776] text-white shadow-md"
                   : "bg-white border border-[#a7d7b0] hover:bg-[#e9fff0]"
               }`}
             >
               <span className="text-xl">{f.emoji}</span>
-              <span className="font-semibold">{f.label}</span>
+              <span className="font-semibold text-sm">{f.label}</span>
             </button>
           ))}
         </div>
 
-        <button
-          onClick={() =>
-  navigate("/map", {
-    state: { filters: Object.keys(filters).filter((k) => filters[k]) },
-  })
-}
+        {/* Main action buttons */}
+        <div className="space-y-3">
+          {/* Ranked, filtered search */}
+          <button
+            onClick={() =>
+              navigate("/map", {
+                state: {
+                  filters: Object.keys(filters).filter((k) => filters[k]),
+                  mode: "ranked", // smart search mode
+                },
+              })
+            }
+            className="w-full bg-[#3ba776] hover:bg-[#2e8a61] text-white rounded-full py-3 font-semibold shadow-md transition-all duration-300 text-lg"
+          >
+            🌞 Show My Best Matches Nearby
+          </button>
 
-          className="w-full bg-[#3ba776] hover:bg-[#2e8a61] text-white rounded-full py-3 font-semibold shadow-md transition-all duration-300"
-        >
-          Show Me Nearby Parks
-        </button>
+          {/* All parks (larger radius) */}
+          <button
+            onClick={() => {
+              resetFilters();
+              navigate("/map", { state: { mode: "all" } });
+            }}
+            className="w-full bg-white/80 border border-[#a7d7b0] text-[#1b4332] rounded-full py-2.5 text-sm font-semibold hover:bg-[#e9fff0] transition-all duration-300"
+          >
+            🌍 Show All Parks (Full List)
+          </button>
+        </div>
       </div>
 
       <footer className="text-center text-sm mt-8 px-6 text-[#3b5d50] italic max-w-md">

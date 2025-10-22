@@ -16,7 +16,6 @@ export async function fetchPlaygrounds() {
     const json = await res.json();
     console.log("🧠 Raw JSON from Apps Script:", json);
 
-    // ✅ Works whether your script returns {ok:true,data:[…]} or just […]
     const data = Array.isArray(json)
       ? json
       : Array.isArray(json.data)
@@ -24,34 +23,66 @@ export async function fetchPlaygrounds() {
       : [];
 
     console.log("📦 Parsed playgrounds array:", data);
+    window.lastPlaygrounds = data; // for debugging
 
-    return data
-      .filter((p) => p.lat || p.Lat)
-      .map((p) => ({
-        id: String(p.id ?? `${p.Lat},${p.Lng}`),
-        name: String(p.name ?? "Untitled playground"),
-        address: String(p.address ?? ""),
-        lat: Number(p.lat ?? p.Lat),
-        lng: Number(p.lng ?? p.Lng),
-        fenced:
-          p.fenced === true ||
-          p.fenced === "TRUE" ||
-          String(p.fenced).toLowerCase() === "yes",
-        dogsAllowed:
-          p.dogsAllowed === true ||
-          p.dogsAllowed === "TRUE" ||
-          String(p.dogsAllowed).toLowerCase() === "yes",
-        bathrooms:
-          p.bathrooms === true ||
-          p.bathrooms === "TRUE" ||
-          String(p.bathrooms).toLowerCase() === "yes",
-        shade: p.shade ?? "",
-        parking: p.parking ?? "",
-        lighting: p.lighting ?? "",
-        notes: p.notes ?? "",
-        city: p.city ?? "",
-        state: p.state ?? "",
-      }));
+    // ✅ Normalize data and include adaptiveEquipment + imageUrl
+    const cleaned = data
+      .map((p) => {
+        const lat =
+          parseFloat(p.lat) ||
+          parseFloat(p.Lat) ||
+          parseFloat(p.latitude) ||
+          parseFloat(p.Latitude);
+        const lng =
+          parseFloat(p.lng) ||
+          parseFloat(p.Lng) ||
+          parseFloat(p.longitude) ||
+          parseFloat(p.Longitude);
+
+        if (!isFinite(lat) || !isFinite(lng)) return null;
+
+        // ✅ normalize imageUrl — handle embedded IMAGE() formulas
+        let imageUrl = "";
+        if (typeof p.imageUrl === "string") {
+          // If it looks like =IMAGE("https://...")
+          const match = p.imageUrl.match(/https?:\/\/[^\s")]+/);
+          if (match) imageUrl = match[0];
+          else imageUrl = p.imageUrl;
+        }
+
+        return {
+          id: String(p.id ?? `${lat},${lng}`),
+          name: String(p.name ?? "Untitled playground"),
+          address: String(p.address ?? ""),
+          lat,
+          lng,
+          fenced:
+            p.fenced === true ||
+            p.fenced === "TRUE" ||
+            String(p.fenced).toLowerCase() === "yes",
+          dogsAllowed:
+            p.dogsAllowed === true ||
+            p.dogsAllowed === "TRUE" ||
+            String(p.dogsAllowed).toLowerCase() === "yes",
+          bathrooms:
+            p.bathrooms === true ||
+            p.bathrooms === "TRUE" ||
+            String(p.bathrooms).toLowerCase() === "yes",
+          shade: p.shade ?? "",
+          parking: p.parking ?? "",
+          lighting: p.lighting ?? "",
+          adaptiveEquipment: p.adaptiveEquipment ?? "",
+          notes: p.notes ?? "",
+          city: p.city ?? "",
+          state: p.state ?? "",
+          // 👇 here's the fix
+          imageUrl,
+        };
+      })
+      .filter(Boolean);
+
+    console.log(`✅ Loaded parks: ${cleaned.length}`);
+    return cleaned;
   } catch (e) {
     console.error("🚨 fetchPlaygrounds failed:", e);
     console.warn("⚠️ Falling back to local data.");

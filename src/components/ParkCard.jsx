@@ -1,106 +1,178 @@
-import React, { useEffect, useState } from "react";
-import { useLocation } from "react-router-dom";
+import React, { useEffect, useMemo, useState } from "react";
 import Papa from "papaparse";
+import { useUser } from "../context/UserContext.jsx";
+
+const SCRIPT_URL =
+  "https://script.google.com/macros/s/AKfycbwfk-5FhIJxcowwUCMAd27KIVKTCct-9Hx-ym4Io3H_3STz6E3QgQrDKtkAxu9bo8vS/exec";
 
 export default function ParkCard({ park, isSelected }) {
-  const location = useLocation();
-  const selectedFilters = location.state?.filters || [];
+  const { filters } = useUser();
 
-  const [weather, setWeather] = useState(null);
-  const [crowdData, setCrowdData] = useState(null);
-  const [tipsFromSheet, setTipsFromSheet] = useState([]);
-  const [tip, setTip] = useState("");
-
-  // 🌦 Fetch weather
+  // ------------ Tips (Sheet) ------------
+  const [tips, setTips] = useState([]);
   useEffect(() => {
-    if (!park?.lat || !park?.lng) return;
-    fetch(
-      `https://api.open-meteo.com/v1/forecast?latitude=${park.lat}&longitude=${park.lng}&current_weather=true&temperature_unit=fahrenheit`
-    )
-      .then((res) => res.json())
-      .then((data) => setWeather(data.current_weather))
-      .catch(console.error);
-  }, [park]);
-
-  // 🧾 Fetch parent tips (Google Sheet)
-  useEffect(() => {
+    if (!park?.name) return;
     Papa.parse(
       "https://docs.google.com/spreadsheets/d/e/2PACX-1vRT_TDB9umNVXH0bKUFlxzVFKcrFzJFNqKP68OUDKcxoU52JGOWfBPQCYDiwaDCRkFf5LF4UWMLKzkN/pub?output=csv",
       {
         download: true,
         header: true,
-        complete: (results) => {
-          const filtered = results.data.filter(
-            (row) =>
-              row["Park Name"] &&
-              park.name &&
-              row["Park Name"].trim().toLowerCase() ===
-                park.name.trim().toLowerCase()
+        complete: (res) => {
+          const rows = (res.data || []).filter(
+            (r) =>
+              (r["Park Name"] || "").trim().toLowerCase() ===
+              (park.name || "").trim().toLowerCase()
           );
-          setTipsFromSheet(filtered);
+          setTips(rows.map((r) => r["Tip"]).filter(Boolean));
         },
       }
     );
-  }, [park]);
+  }, [park?.name]);
 
-  // 💬 Submit tip (anonymous)
-  const handleSubmitTip = async () => {
-    if (!tip.trim()) return;
+  // ------------ Weather ------------
+  const [weather, setWeather] = useState(null);
+  useEffect(() => {
+    if (!park?.lat || !park?.lng) return;
+    const load = async () => {
+      try {
+        const r = await fetch(
+          `https://api.open-meteo.com/v1/forecast?latitude=${park.lat}&longitude=${park.lng}&current_weather=true&temperature_unit=fahrenheit&windspeed_unit=mph`
+        );
+        const j = await r.json();
+        setWeather(j.current_weather);
+      } catch (e) {
+        console.error("weather", e);
+      }
+    };
+    load();
+    const id = setInterval(load, 180000); // 3 min
+    return () => clearInterval(id);
+  }, [park?.lat, park?.lng]);
+
+  // ------------ CrowdSense ------------
+  const [crowd, setCrowd] = useState(null);
+
+  const fetchCrowd = async () => {
     try {
-      await fetch(
-        "https://script.google.com/macros/s/AKfycbyY3FSGjyq4L_vt74djzD2Q7obdbbspp_DOKCGSOSqZ9C5SwXBUIf2fZ5zgYd-DbAZo1A/exec",
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ parkName: park.name, tip }),
-        }
-      );
-      alert("Thanks for sharing your parent tip! 💕");
-      setTip("");
-    } catch (err) {
-      console.error("Error submitting tip:", err);
-      alert("Something went wrong — please try again later.");
+      const r = await fetch(SCRIPT_URL);
+      const j = await r.json();
+      const found = (j.data || []).find((p) => String(p.id) === String(park.id));
+      setCrowd(found?.crowd || null);
+    } catch (e) {
+      console.error("crowd fetch", e);
     }
   };
 
-  // ⚡ Live CrowdSense refresh (every 30s)
   useEffect(() => {
     if (!park?.id) return;
-    const fetchCrowd = async () => {
-      try {
-        const res = await fetch(
-          "https://script.google.com/macros/s/AKfycbyY3FSGjyq4L_vt74djzD2Q7obdbbspp_DOKCGSOSqZ9C5SwXBUIf2fZ5zgYd-DbAZo1A/exec"
-        );
-        const data = await res.json();
-        const found = data.data?.find((p) => String(p.id) === String(park.id));
-        if (found?.crowd) setCrowdData(found.crowd);
-      } catch (err) {
-        console.error("Failed to load crowd data", err);
-      }
-    };
-
     fetchCrowd();
-    const interval = setInterval(fetchCrowd, 30000);
-    return () => clearInterval(interval);
-  }, [park]);
+    const id = setInterval(fetchCrowd, 30000);
+    return () => clearInterval(id);
+  }, [park?.id]);
 
-  // 🪄 Send feedback (+1)
-  const handleCrowdVote = async (value) => {
+  // send a feedback (+1)
+  const vote = async (category) => {
     try {
-      await fetch(
-        "https://script.google.com/macros/s/AKfycbyY3FSGjyq4L_vt74djzD2Q7obdbbspp_DOKCGSOSqZ9C5SwXBUIf2fZ5zgYd-DbAZo1A/exec",
-        {
+      await fetch(SCRIPT_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          parkId: park.id,
+          signalType: "feedback",
+          value: category,
+        }),
+      });
+      if (category === "clean" || category === "crowded") {
+        await fetch(SCRIPT_URL, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             parkId: park.id,
             signalType: "feedback",
-            value,
+            value: category === "clean" ? "quiet" : "busy",
           }),
-        }
-      );
-    } catch (err) {
-      console.error("Error sending feedback:", err);
+        });
+      }
+      fetchCrowd();
+    } catch (e) {
+      console.error("vote", e);
+    }
+  };
+
+  const counts = crowd?.counts || {
+    clean: 0,
+    conditions: 0,
+    crowded: 0,
+    concerns: 0,
+    closed: 0,
+    icecream: 0,
+  };
+
+  // ------------ Features logic ------------
+  const selected = useMemo(
+    () => Object.keys(filters || {}).filter((k) => !!filters[k]),
+    [filters]
+  );
+
+  const parkFeatureMap = {
+    fenced: !!park?.fenced,
+    dogs: !!park?.dogsAllowed,
+    bathrooms: !!park?.bathrooms,
+    shade: !!park?.shade,
+    parking: !!park?.parking,
+    lighting: !!park?.lighting,
+  };
+
+  const amenities = Object.entries(parkFeatureMap)
+    .filter(([, v]) => v)
+    .map(([k]) => k);
+
+  const needs = selected.filter((k) => !amenities.includes(k));
+  const matchScore =
+    selected.length === 0
+      ? 100
+      : Math.round(((selected.length - needs.length) / selected.length) * 100);
+
+  const matchText =
+    matchScore === 100
+      ? "Perfect match!"
+      : matchScore >= 75
+      ? "Great fit."
+      : matchScore >= 50
+      ? "Worth checking out."
+      : "Might not have what you need.";
+
+  // ------------ Tips submit ------------
+  const [tipDraft, setTipDraft] = useState("");
+  const submitTip = async () => {
+    if (!tipDraft.trim()) return;
+    try {
+      await fetch(SCRIPT_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ parkName: park.name, tip: tipDraft }),
+      });
+      setTipDraft("");
+      setTimeout(() => {
+        Papa.parse(
+          "https://docs.google.com/spreadsheets/d/e/2PACX-1vRT_TDB9umNVXH0bKUFlxzVFKcrFzJFNqKP68OUDKcxoU52JGOWfBPQCYDiwaDCRkFf5LF4UWMLKzkN/pub?output=csv",
+          {
+            download: true,
+            header: true,
+            complete: (res) => {
+              const rows = (res.data || []).filter(
+                (r) =>
+                  (r["Park Name"] || "").trim().toLowerCase() ===
+                  (park.name || "").trim().toLowerCase()
+              );
+              setTips(rows.map((r) => r["Tip"]).filter(Boolean));
+            },
+          }
+        );
+      }, 1200);
+    } catch (e) {
+      console.error("tip", e);
+      alert("Couldn’t submit that tip. Try again later.");
     }
   };
 
@@ -108,159 +180,201 @@ export default function ParkCard({ park, isSelected }) {
     park.address || park.name
   )}`;
 
+  const description =
+    (park.description || "").trim() ||
+    "Open play areas, green space, and room to relax together.";
+
   return (
     <div
-      className={`grid md:grid-cols-3 gap-6 p-6 rounded-2xl border shadow-md transition-all ${
-        isSelected ? "border-pink-300 bg-white" : "border-gray-200 bg-white"
+      className={`grid grid-cols-1 md:grid-cols-3 gap-6 p-6 rounded-3xl bg-white/90 backdrop-blur-md border border-white/60 shadow-[0_8px_25px_rgba(0,0,0,0.08)] ${
+        isSelected ? "ring-2 ring-[#a8e0ff]" : ""
       }`}
     >
-      {/* 🩵 LEFT COLUMN — Park Info */}
-      <div className="bg-[#e9f4ff] p-4 rounded-xl border border-blue-100 shadow-sm">
-        <h2 className="text-lg font-bold text-[#0a2540] mb-1">{park.name}</h2>
+      {/* LEFT — Park Info */}
+      <div className="rounded-2xl border border-[#e7f0fb] bg-[#f6fbff] p-4">
+        <h2 className="text-lg font-extrabold text-[#0a2540] mb-1">
+          {park.name}
+        </h2>
         <a
           href={googleLink}
           target="_blank"
           rel="noopener noreferrer"
-          className="inline-block bg-[#0a6cff]/10 text-[#0a6cff] font-semibold text-sm px-3 py-2 rounded-lg hover:bg-[#0a6cff]/20 transition-all underline underline-offset-2 mb-2"
+          className="inline-block text-[#0a6cff] underline underline-offset-2 font-semibold text-sm mb-1"
         >
-          📍 {park.address}
+          📍 {park.address || park.name}
         </a>
         <p className="text-xs text-gray-600 mb-3">{park.city}</p>
 
-        <h3 className="font-semibold text-sm text-[#0a2540] underline mb-1">
-          Features
-        </h3>
-        {selectedFilters.length > 0 ? (
-          <div className="flex flex-wrap gap-2 mb-2">
-            {selectedFilters.map((f, i) => (
-              <span
-                key={i}
-                className="bg-[#dcfce7] text-[#0a2540] px-2 py-1 rounded-full text-xs"
-              >
-                {f}
-              </span>
-            ))}
-          </div>
-        ) : (
-          <p className="text-xs text-gray-500 italic mb-2">
-            No features selected yet.
+        <p className="italic text-sm text-[#0e3325] mb-2">{description}</p>
+
+        {/* ♿️ Adaptive Equipment */}
+        {park.adaptiveEquipment && (
+          <p className="text-sm font-semibold text-green-800 mb-3">
+            ♿️ Adaptive Equipment: {park.adaptiveEquipment}
           </p>
         )}
+
+        <Section title="Your Selected Features">
+          <BadgeRow items={selected} empty="No preferences set" color="green" />
+        </Section>
+
+        <Section title="Amenities">
+          <BadgeRow items={amenities} empty="Not listed yet" color="blue" />
+        </Section>
+
+        <Section title="Needs Improvement">
+          <BadgeRow items={needs} empty="Nothing missing 🎉" color="rose" />
+        </Section>
+
+        <div className="mt-2">
+          <p className="text-sm font-semibold text-[#0a2540]">
+            💛 {matchScore}% Match — {matchText}
+          </p>
+          <div className="h-2 mt-1 w-full bg-gray-200/60 rounded-full overflow-hidden">
+            <div
+              className="h-full bg-gradient-to-r from-[#ffe29a] to-[#ffd1e4]"
+              style={{ width: `${matchScore}%` }}
+            />
+          </div>
+        </div>
       </div>
 
-      {/* 💛 MIDDLE COLUMN — Live Look */}
-      <div className="bg-[#fffbe6] p-4 rounded-xl border border-yellow-100 shadow-inner">
-        <h3 className="text-sm font-semibold text-[#0a2540] mb-3">
-          ☀️ Live Look — The Five C’s
+      {/* MIDDLE — Live Look */}
+      <div className="rounded-2xl border border-yellow-100 bg-[#fffdf3] p-4">
+        <h3 className="text-sm font-semibold text-[#0a2540] mb-2">
+          ☀️ Live Look — The Six C’s
         </h3>
-
-        {weather && (
-          <div className="text-xs bg-white/80 rounded-lg p-2 border border-yellow-100 mb-3">
-            <p className="font-semibold">
-              Current Weather: {weather.temperature}°F — Wind {weather.windspeed} mph
-            </p>
+        {weather ? (
+          <div className="text-xs bg-white/80 rounded-md px-2 py-1 border border-yellow-100 inline-block mb-3">
+            <span className="font-semibold">{weather.temperature}°F</span> — Wind{" "}
+            {weather.windspeed} mph
           </div>
-        )}
-
-        {crowdData ? (
-          <>
-            <div className="mb-2">
-              <span
-                className="inline-block w-3 h-3 rounded-full mr-2 align-middle"
-                style={{ backgroundColor: crowdData.color }}
-              />
-              <span className="font-semibold text-[#0a2540]">
-                {crowdData.label}
-              </span>
-            </div>
-            <div className="text-xs text-gray-600 mb-3">
-              <p>
-                {crowdData.presence} nearby • {crowdData.busyVotes} busy votes •{" "}
-                {crowdData.quietVotes} calm votes
-              </p>
-            </div>
-          </>
         ) : (
-          <p className="text-xs text-gray-500 italic mb-3">
-            Loading live reports…
-          </p>
+          <p className="text-xs text-gray-500 mb-3 italic">Loading weather…</p>
         )}
-
-        <div className="grid grid-cols-2 gap-2 text-xs mb-2">
-          <button
-            onClick={() => handleCrowdVote("quiet")}
-            className="rounded-lg bg-white/90 border border-yellow-200 py-2 hover:bg-[#faffd8] transition"
-          >
-            ✅ Clean / Calm
-          </button>
-          <button
-            onClick={() => handleCrowdVote("busy")}
-            className="rounded-lg bg-white/90 border border-yellow-200 py-2 hover:bg-[#fff3c4] transition"
-          >
-            🚸 Crowded
-          </button>
+        <div className="grid grid-cols-2 gap-2 text-xs">
+          <CButton icon="🧼" label="Clean" count={counts.clean} onClick={() => vote("clean")} />
+          <CButton icon="💧" label="Conditions" count={counts.conditions} onClick={() => vote("conditions")} />
+          <CButton icon="🚸" label="Crowded" count={counts.crowded} onClick={() => vote("crowded")} />
+          <CButton icon="😐" label="Concerns" count={counts.concerns} onClick={() => vote("concerns")} />
+          <CButton icon="🚫" label="Closed" count={counts.closed} onClick={() => vote("closed")} />
+          <CButton icon="🍦" label="iCe Cream Man" count={counts.icecream} onClick={() => vote("icecream")} />
         </div>
-
-        <p className="text-[11px] text-gray-500 mt-2 border-t border-yellow-100 pt-2">
-          Clean (litter-free), Conditions (equipment safe), Crowded (busy now),
-          Concerns (issues), Closed (temporarily shut).
+        <p className="text-[11px] text-gray-600 mt-3 border-t border-yellow-100 pt-2 leading-relaxed">
+          Clean = litter-free · Conditions = safe/dry · Crowded = busy now · Concerns = issues/damage · Closed = shut ·
+          iCe Cream Man = vendor nearby.
         </p>
       </div>
 
-      {/* 🩷 RIGHT COLUMN — Family Tools */}
-      <div className="bg-[#fff5f8] p-4 rounded-xl border border-pink-100 shadow-sm flex flex-col gap-3">
-        {park.image ? (
-          <img
-            src={park.image}
-            alt={park.name}
-            className="rounded-lg w-full h-24 object-cover"
-          />
-        ) : (
-          <div className="rounded-lg w-full h-24 bg-gray-100 text-xs text-gray-500 flex items-center justify-center">
-            Photo coming soon
-          </div>
-        )}
+      {/* RIGHT — Family Tools */}
+      <div className="rounded-2xl border border-pink-100 bg-[#fff7fb] p-4 flex flex-col gap-3">
+       {park.imageUrlRaw ? (
+  <img
+    src={park.imageUrlRaw}
+    alt={park.name}
+    className="rounded-lg w-full h-28 object-cover"
+  />
+) : park.imageUrl ? (
+  <img
+    src={park.imageUrl}
+    alt={park.name}
+    className="rounded-lg w-full h-28 object-cover"
+  />
+) : (
+  <div className="rounded-lg w-full h-28 bg-white/70 border border-pink-100 text-xs text-gray-500 flex items-center justify-center">
+    {park.indoorPlayArea
+      ? "🏠 Photo coming soon"
+      : "☀️ Photo coming soon"}
+  </div>
+)}
 
         <div>
-          <h4 className="text-sm font-semibold text-[#0a2540] mb-1">
-            🧺 Family Tools
-          </h4>
-
-          {tipsFromSheet.length > 0 ? (
+          <h4 className="text-sm font-semibold text-[#0a2540] mb-1">🧺 Family Toolkit</h4>
+          {tips.length ? (
             <div className="space-y-2">
-              {tipsFromSheet.map((t, i) => (
+              {tips.map((t, i) => (
                 <div
-                  key={i}
+                  key={`${i}-${t.slice(0, 12)}`}
                   className="bg-white/80 border border-pink-100 rounded-lg p-2 text-xs"
                 >
-                  {t.Tip}
+                  {t}
                 </div>
               ))}
             </div>
           ) : (
-            <p className="text-xs text-gray-700 italic">
+            <p className="text-xs text-gray-600 italic">
               No parent tips yet — be the first!
             </p>
           )}
         </div>
 
         <div>
-          <p className="text-xs font-medium text-[#0a2540] mb-1">💬 Add your tip</p>
           <textarea
-            value={tip}
-            onChange={(e) => setTip(e.target.value)}
-            placeholder="Share your parent pro tips..."
-            className="w-full border border-gray-200 rounded-lg p-2 text-xs resize-none focus:ring-2 focus:ring-[#fcbad3] focus:outline-none"
+            value={tipDraft}
+            onChange={(e) => setTipDraft(e.target.value)}
             rows={3}
+            placeholder="Share your parent pro tips…"
+            className="w-full border border-gray-200 rounded-lg p-2 text-xs resize-none focus:ring-2 focus:ring-[#fcbad3] focus:outline-none"
           />
           <button
-            onClick={handleSubmitTip}
-            className="bg-[#fcbad3] hover:bg-[#f7a5c8] text-[#0a2540] font-semibold py-1.5 px-3 rounded-lg transition text-xs mt-1 w-full"
+            onClick={submitTip}
+            className="bg-[#fcbad3] hover:bg-[#f7a5c8] text-[#0a2540] font-semibold py-1.5 px-3 rounded-lg transition text-xs mt-2 w-full"
           >
             Submit Tip
           </button>
         </div>
       </div>
     </div>
+  );
+}
+
+/* ---------- small helpers ---------- */
+
+function Section({ title, children }) {
+  return (
+    <div className="mb-3">
+      <h3 className="font-semibold text-sm text-[#0a2540] mb-1">{title}:</h3>
+      {children}
+    </div>
+  );
+}
+
+function BadgeRow({ items, empty, color }) {
+  if (!items?.length) {
+    return <p className="text-xs italic text-gray-500">{empty}</p>;
+  }
+  const colorMap = {
+    green: "bg-[#dcfce7] text-[#14532d]",
+    blue: "bg-[#e0f2fe] text-[#1e3a8a]",
+    rose: "bg-[#ffe4e6] text-[#9f1239]",
+  };
+  const cls = colorMap[color] || "bg-gray-100 text-gray-700";
+  return (
+    <div className="flex flex-wrap gap-2">
+      {items.map((x) => (
+        <span
+          key={x}
+          className={`${cls} px-2 py-1 rounded-full text-[11px] font-semibold`}
+        >
+          {x}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+function CButton({ icon, label, count, onClick }) {
+  return (
+    <button
+      onClick={onClick}
+      className="flex items-center justify-between gap-2 bg-white/90 border border-yellow-200 rounded-md px-2 py-2 hover:bg-[#fff7cf] transition"
+      title={label}
+    >
+      <span className="flex items-center gap-2">
+        <span className="text-lg leading-none">{icon}</span>
+        <span className="font-semibold text-[#0a2540]">{label}</span>
+      </span>
+      <span className="text-xs text-gray-600 tabular-nums">{count ?? 0}</span>
+    </button>
   );
 }
