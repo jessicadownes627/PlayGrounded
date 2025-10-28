@@ -2,9 +2,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import Papa from "papaparse";
 import { useUser } from "../context/UserContext.jsx";
-
-const SCRIPT_URL =
-  "https://script.google.com/macros/s/AKfycbwfk-5FhIJxcowwUCMAd27KIVKTCct-9Hx-ym4Io3H_3STz6E3QgQrDKtkAxu9bo8vS/exec";
+import { useCrowdSense } from "../hooks/useCrowdSense.js";
 
 export default function ParkCard({ park, isSelected }) {
   const { filters } = useUser();
@@ -51,49 +49,13 @@ export default function ParkCard({ park, isSelected }) {
   }, [park?.lat, park?.lng]);
 
   /* ---------- Crowd / Vibe ---------- */
-  const [crowd, setCrowd] = useState(null);
-  const fetchCrowd = async () => {
-    try {
-      const r = await fetch(SCRIPT_URL);
-      const j = await r.json();
-      const found = (j.data || []).find((p) => String(p.id) === String(park.id));
-      setCrowd(found?.crowd || null);
-    } catch (e) {
-      console.error("crowd fetch", e);
-    }
-  };
-  useEffect(() => {
-    if (!park?.id) return;
-    fetchCrowd();
-    const id = setInterval(fetchCrowd, 30000);
-    return () => clearInterval(id);
-  }, [park?.id]);
-
-  const vote = async (category) => {
-    try {
-      await fetch(SCRIPT_URL, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          parkId: park.id,
-          signalType: "feedback",
-          value: category,
-        }),
-      });
-      fetchCrowd();
-    } catch (e) {
-      console.error("vote", e);
-    }
-  };
-
-  const counts = crowd?.counts || {
-    clean: 0,
-    conditions: 0,
-    crowded: 0,
-    concerns: 0,
-    closed: 0,
-    icecream: 0,
-  };
+  const {
+    counts,
+    record: crowdRecord,
+    status: crowdStatus,
+    vote,
+    isSubmitting: crowdUpdating,
+  } = useCrowdSense(park?.id);
 
   /* ---------- Matching / Features ---------- */
   const selected = useMemo(
@@ -135,9 +97,7 @@ export default function ParkCard({ park, isSelected }) {
     park.address || park.name
   )}`;
 
-  const description =
-    (park.description || "").trim() ||
-    "Open play areas, green space, and room to relax together.";
+  const description = (park.description || park.notes || "").trim();
 
   /* ---------- Render ---------- */
   return (
@@ -202,7 +162,9 @@ export default function ParkCard({ park, isSelected }) {
           )}
         </div>
 
-        <p className="italic text-sm text-[#0e3325] mb-2">{description}</p>
+        {description && (
+          <p className="italic text-sm text-[#0e3325] mb-2">{description}</p>
+        )}
 
         <Section title="Your Selected Features">
           <BadgeRow items={selected} empty="No preferences set" color="green" />
@@ -229,9 +191,23 @@ export default function ParkCard({ park, isSelected }) {
 
       {/* MIDDLE — Adaptive Energy Tile */}
       {park.indoorPlayArea === "yes" ? (
-        <IndoorVibeTile park={park} crowd={crowd} vote={vote} />
+        <IndoorVibeTile
+          park={park}
+          counts={counts}
+          status={crowdStatus}
+          vote={vote}
+          updating={crowdUpdating}
+          record={crowdRecord}
+        />
       ) : (
-        <OutdoorLiveLook weather={weather} counts={counts} vote={vote} />
+        <OutdoorLiveLook
+          weather={weather}
+          counts={counts}
+          vote={vote}
+          status={crowdStatus}
+          updating={crowdUpdating}
+          record={crowdRecord}
+        />
       )}
 
       {/* RIGHT — Family Toolkit 2.0 */}
@@ -273,59 +249,177 @@ function BadgeRow({ items, empty, color }) {
   );
 }
 
-/* ---------- Live Look (Outdoor) ---------- */
-function OutdoorLiveLook({ weather, counts, vote }) {
-  return (
-    <div className="rounded-2xl border border-yellow-100 bg-[#fffdf3] p-4">
-      <h3 className="text-sm font-semibold text-[#0a2540] mb-2">
-        ☀️ Live Look — The Six C’s
-      </h3>
-      {weather ? (
-        <div className="text-xs bg-white/80 rounded-md px-2 py-1 border border-yellow-100 inline-block mb-3">
-          <span className="font-semibold">{weather.temperature}°F</span> — Wind{" "}
-          {weather.windspeed} mph
-        </div>
-      ) : (
-        <p className="text-xs text-gray-500 mb-3 italic">Loading weather…</p>
-      )}
+const tallyReports = (counts = {}) =>
+  Object.values(counts)
+    .map((v) => Number(v) || 0)
+    .reduce((sum, val) => sum + val, 0);
 
-      <div className="grid grid-cols-2 gap-2 text-xs">
-        <CButton icon="🧼" label="Clean" count={counts.clean} onClick={() => vote("clean")} />
-        <CButton icon="💧" label="Conditions" count={counts.conditions} onClick={() => vote("conditions")} />
-        <CButton icon="🚸" label="Crowded" count={counts.crowded} onClick={() => vote("crowded")} />
-        <CButton icon="😐" label="Concerns" count={counts.concerns} onClick={() => vote("concerns")} />
-        <CButton icon="🚫" label="Closed" count={counts.closed} onClick={() => vote("closed")} />
-        <CButton icon="🍦" label="iCe Cream Man" count={counts.icecream} onClick={() => vote("icecream")} />
+const buildCrowdSummary = (counts = {}, record = {}) => {
+  const total = tallyReports(counts);
+  if (record?.status === "closed" || counts.closed > 0) {
+    return {
+      emoji: "🚫",
+      title: "Marked Closed",
+      body: "Recent reports flagged this playground as closed. Tap Directions to verify before heading out.",
+      tone: "error",
+    };
+  }
+  if (counts.concerns > 0) {
+    return {
+      emoji: "⚠️",
+      title: "Heads Up!",
+      body: "Families shared a concern. Check conditions on arrival.",
+      tone: "warn",
+    };
+  }
+  if (counts.crowded >= Math.max(3, counts.clean + counts.conditions)) {
+    return {
+      emoji: "🎉",
+      title: "Busy & Lively",
+      body: "Expect a lively crowd right now. Great energy if your crew loves friends.",
+      tone: "busy",
+    };
+  }
+  if (counts.clean + counts.conditions > 0) {
+    return {
+      emoji: "🌿",
+      title: "Wide Open",
+      body: "Parents say it feels relaxed with good conditions.",
+      tone: "chill",
+    };
+  }
+  if (total === 0) {
+    return {
+      emoji: "👋",
+      title: "Share a Quick Update",
+      body: "Let other families know what it looks like right now.",
+      tone: "idle",
+    };
+  }
+  return {
+    emoji: "🌤️",
+    title: "Looking Good",
+    body: "Reports look positive. Have fun out there!",
+    tone: "chill",
+  };
+};
+
+const renderStatusLabel = (status) => {
+  switch (status) {
+    case "loading":
+      return "Gathering live reports…";
+    case "error":
+      return "CrowdSense paused — try again soon.";
+    case "updating":
+      return "Sending your update…";
+    default:
+      return "Updated every few minutes.";
+  }
+};
+
+/* ---------- Live Look (Outdoor) ---------- */
+function OutdoorLiveLook({ weather, counts, vote, status, updating, record }) {
+  const summary = buildCrowdSummary(counts, record);
+  const totalReports = tallyReports(counts);
+  const statusLabel = renderStatusLabel(updating ? "updating" : status);
+
+  return (
+    <div className="rounded-2xl border border-yellow-100 bg-[#fffdf3] p-4 flex flex-col gap-3">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <h3 className="text-sm font-semibold text-[#0a2540]">
+            ☀️ Live Look
+          </h3>
+          <p className="text-[11px] text-gray-500">{statusLabel}</p>
+        </div>
+        {weather ? (
+          <div className="text-xs bg-white/90 rounded-md px-2 py-1 border border-yellow-100 shadow-sm">
+            <span className="font-semibold">{Math.round(weather.temperature)}°F</span>
+            <span className="mx-1">•</span>
+            Wind {Math.round(weather.windspeed)} mph
+          </div>
+        ) : (
+          <p className="text-[11px] text-gray-500 italic">Weather loading…</p>
+        )}
       </div>
 
-      <p className="text-[11px] text-gray-600 mt-3 border-t border-yellow-100 pt-2 leading-relaxed">
-        Clean = litter-free · Conditions = safe/dry · Crowded = busy now · Concerns = issues/damage · Closed = shut · iCe Cream Man = vendor nearby.
+      <div
+        className={`rounded-xl px-3 py-3 bg-white/90 border ${
+          summary.tone === "error"
+            ? "border-red-200"
+            : summary.tone === "warn"
+            ? "border-amber-200"
+            : summary.tone === "busy"
+            ? "border-orange-200"
+            : "border-green-100"
+        } shadow-sm flex items-start gap-3`}
+      >
+        <span className="text-2xl leading-none">{summary.emoji}</span>
+        <div className="text-xs text-[#0a2540]">
+          <p className="font-semibold text-sm">{summary.title}</p>
+          <p className="leading-relaxed mt-1">{summary.body}</p>
+          <p className="mt-2 text-[11px] text-gray-500">
+            {totalReports > 0
+              ? `${totalReports} recent report${totalReports === 1 ? "" : "s"}`
+              : "No reports yet"}
+          </p>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-2 gap-2 text-xs">
+        <CButton icon="🧼" label="Clean" count={counts.clean} onClick={() => vote("clean")} disabled={updating} />
+        <CButton icon="💧" label="Conditions" count={counts.conditions} onClick={() => vote("conditions")} disabled={updating} />
+        <CButton icon="🚸" label="Crowded" count={counts.crowded} onClick={() => vote("crowded")} disabled={updating} />
+        <CButton icon="😐" label="Concerns" count={counts.concerns} onClick={() => vote("concerns")} disabled={updating} />
+        <CButton icon="🚫" label="Closed" count={counts.closed} onClick={() => vote("closed")} disabled={updating} />
+        <CButton icon="🍦" label="Treats" count={counts.icecream} onClick={() => vote("icecream")} disabled={updating} />
+      </div>
+
+      <p className="text-[11px] text-gray-600 border-t border-yellow-100 pt-2 leading-relaxed">
+        Clean = litter-free · Conditions = safe/dry · Crowded = busy now · Concerns = damage/issues · Closed = not open · Treats = dessert truck spotted.
       </p>
     </div>
   );
 }
 
 /* ---------- Indoor Vibe Tile ---------- */
-function IndoorVibeTile({ park, crowd, vote }) {
-  const vibe =
-    crowd?.counts?.crowded > 5
-      ? "🎉 Busy & Fun!"
-      : crowd?.counts?.crowded > 1
-      ? "😄 Active"
-      : "🌿 Chill";
+function IndoorVibeTile({ park, counts, status, vote, updating, record }) {
+  const summary = buildCrowdSummary(counts, record);
+  const statusLabel = renderStatusLabel(updating ? "updating" : status);
   return (
     <div className="rounded-2xl border border-yellow-100 bg-[#fffdf3] p-4">
       <h3 className="text-sm font-semibold text-[#0a2540] mb-2">
         🎟️ Live Look — Play Space Vibe
       </h3>
-      <div className="text-base font-semibold mb-2 text-[#0a2540]">{vibe}</div>
-      <p className="text-[11px] text-gray-600 mb-3">
-        Parents nearby say it’s {vibe.toLowerCase()} right now.
+      <p className="text-[11px] text-gray-500 mb-3">
+        {statusLabel}
       </p>
-      <div className="flex gap-2">
-        <CButton icon="🌿" label="Chill" onClick={() => vote("crowded")} />
-        <CButton icon="🎉" label="Busy & Fun" onClick={() => vote("crowded")} />
+
+      <div
+        className={`rounded-xl px-3 py-3 bg-white/90 border ${
+          summary.tone === "error"
+            ? "border-red-200"
+            : summary.tone === "warn"
+            ? "border-amber-200"
+            : summary.tone === "busy"
+            ? "border-orange-200"
+            : "border-green-100"
+        } shadow-sm flex items-start gap-3 mb-3`}
+      >
+        <span className="text-2xl leading-none">{summary.emoji}</span>
+        <div className="text-xs text-[#0a2540]">
+          <p className="font-semibold text-sm">{summary.title}</p>
+          <p className="leading-relaxed mt-1">{summary.body}</p>
+        </div>
       </div>
+
+      <div className="grid grid-cols-2 gap-2 text-xs">
+        <CButton icon="🌿" label="Chill" onClick={() => vote("crowded")} disabled={updating} />
+        <CButton icon="🎉" label="Busy" onClick={() => vote("crowded")} disabled={updating} />
+        <CButton icon="😐" label="Concerns" onClick={() => vote("concerns")} disabled={updating} />
+        <CButton icon="🚫" label="Closed" onClick={() => vote("closed")} disabled={updating} />
+      </div>
+
       {park.liveAnnouncement && (
         <div className="mt-3 bg-white/80 border border-yellow-100 rounded-lg p-2 text-xs text-[#0a2540]">
           🎈 {park.liveAnnouncement}
@@ -338,44 +432,75 @@ function IndoorVibeTile({ park, crowd, vote }) {
 /* ---------- Family Toolkit 2.0 ---------- */
 function FamilyToolkit({ park, tips }) {
   const hasTips = tips?.length > 0;
+  const highlightTip = hasTips ? tips[0] : null;
+  const extraTips = hasTips ? tips.slice(1, 3) : [];
+
+  const highlights = [];
+  if (park.shade) highlights.push("🪑 Shaded seating spots");
+  if (park.bathrooms) highlights.push("🚻 Bathrooms on-site");
+  if (park.parking) highlights.push(`🚗 ${String(park.parking).trim() || "Easy parking"}`);
+  if (park.adaptiveEquipment) highlights.push("♿ Inclusive play gear");
+  if (park.foodAvailable) highlights.push("🍽️ Snacks or café available");
+  if (park.indoorPlayArea) highlights.push("🏠 Indoor play area");
+
+  const notesLower = String(park.notes || "").toLowerCase();
+  const packSet = new Set();
+  if (!park.indoorPlayArea) {
+    if (!park.shade) packSet.add("🧢 Sun hats & sunscreen");
+    if (notesLower.includes("sand")) packSet.add("🪣 Sand toys");
+    if (notesLower.includes("splash") || notesLower.includes("spray"))
+      packSet.add("💦 Water shoes & towels");
+    packSet.add("🎒 Water bottles & snacks");
+  } else {
+    packSet.add("🧦 Grip socks for play structures");
+    if (park.foodAvailable) packSet.add("💳 Card for café treats");
+    packSet.add("💧 Water bottles for breaks");
+  }
+
+  const packList = Array.from(packSet).slice(0, 4);
+
   return (
-    <div className="rounded-2xl border border-pink-100 bg-[#fff7fb] p-4 flex flex-col gap-3">
+    <div className="rounded-2xl border border-pink-100 bg-[#fff7fb] p-4 flex flex-col gap-4">
       <ParkPhoto park={park} />
-      <div>
-        <h4 className="text-sm font-semibold text-[#0a2540] mb-1">🧺 Family Toolkit</h4>
+      <div className="space-y-3">
+        <div>
+          <h4 className="text-sm font-semibold text-[#0a2540] mb-1">🧺 Family Toolkit</h4>
+          <ul className="text-xs text-[#0a2540] leading-relaxed space-y-1">
+            {highlights.length > 0 ? (
+              highlights.map((item) => <li key={item}>{item}</li>)
+            ) : (
+              <li>🌳 Explore and let us know what you discover!</li>
+            )}
+          </ul>
+        </div>
 
-        <ul className="text-xs text-[#0a2540] leading-relaxed list-disc ml-4">
-          {park.indoorPlayArea ? (
-            <>
-              {park.foodAvailable && <li>Snacks or café on-site.</li>}
-              {park.adaptiveEquipment && <li>Inclusive & sensory-friendly zones.</li>}
-              <li>{park.notes || "Socks required • Bring water bottles."}</li>
-            </>
-          ) : (
-            <>
-              {park.shade && <li>Shaded seating areas available.</li>}
-              {park.bathrooms && <li>Restrooms nearby.</li>}
-              {park.parking && <li>Free parking on-site.</li>}
-              <li>{park.notes || "Pack sunscreen & snacks for the day!"}</li>
-            </>
-          )}
-        </ul>
-
-        {hasTips && (
-          <div className="mt-3 space-y-2">
-            {tips.map((t, i) => (
-              <div
-                key={`${i}-${t.slice(0, 12)}`}
-                className="bg-white/80 border border-pink-100 rounded-lg p-2 text-xs text-[#0a2540]"
-              >
-                💬 {t}
-              </div>
+        <div className="bg-white/80 border border-pink-100 rounded-lg p-3">
+          <p className="text-xs font-semibold text-[#0a2540] mb-2">Pack This</p>
+          <ul className="text-[11px] text-[#0a2540] leading-relaxed list-disc ml-4 space-y-1">
+            {packList.map((item) => (
+              <li key={item}>{item}</li>
             ))}
+          </ul>
+        </div>
+
+        {highlightTip ? (
+          <div className="bg-white/80 border border-pink-100 rounded-lg p-3 text-xs text-[#0a2540] space-y-2">
+            <p className="font-semibold">Parent Tip</p>
+            <p>💬 {highlightTip}</p>
+            {extraTips.map((t, i) => (
+              <p key={`${i}-${t.slice(0, 12)}`} className="text-[11px] text-[#0a2540]/80">
+                • {t}
+              </p>
+            ))}
+          </div>
+        ) : (
+          <div className="bg-white/70 border border-dashed border-pink-200 rounded-lg p-3 text-[11px] text-[#0a2540]">
+            💡 Know a secret about this spot? Tap a crowd button or DM us to add a parent tip!
           </div>
         )}
 
         {park.specialEvents && (
-          <div className="mt-3 bg-white/80 border border-pink-100 rounded-lg p-2 text-xs text-[#0a2540]">
+          <div className="bg-white/80 border border-pink-100 rounded-lg p-2 text-xs text-[#0a2540]">
             🎉 {park.specialEvents}
           </div>
         )}
@@ -385,11 +510,12 @@ function FamilyToolkit({ park, tips }) {
 }
 
 /* ---------- Reusable ---------- */
-function CButton({ icon, label, count, onClick }) {
+function CButton({ icon, label, count, onClick, disabled }) {
   return (
     <button
       onClick={onClick}
-      className="flex items-center justify-between gap-2 bg-white/90 border border-yellow-200 rounded-md px-2 py-2 hover:bg-[#fff7cf] transition"
+      disabled={disabled}
+      className="flex items-center justify-between gap-2 bg-white/90 border border-yellow-200 rounded-md px-2 py-2 hover:bg-[#fff7cf] transition disabled:opacity-60 disabled:cursor-not-allowed"
       title={label}
     >
       <span className="flex items-center gap-2">
@@ -405,29 +531,56 @@ function CButton({ icon, label, count, onClick }) {
 
 function ParkPhoto({ park }) {
   const [imgSrc, setImgSrc] = React.useState(null);
-  useEffect(() => {
-    const raw = park.imageUrlRaw || park.imageUrl;
-    if (!raw) return;
-    let directUrl = raw;
-    const match = raw.match(/\/d\/(.*?)\//);
-    if (match && match[1]) {
-      directUrl = `https://drive.google.com/uc?export=view&id=${match[1]}`;
-    }
-    setImgSrc(directUrl);
-  }, [park.imageUrlRaw, park.imageUrl]);
 
-  if (!imgSrc)
-    return (
-      <div className="rounded-lg w-full h-28 bg-white/70 border border-pink-100 text-xs text-gray-500 flex items-center justify-center">
-        {park.indoorPlayArea ? "🏠 Photo coming soon" : "☀️ Photo coming soon"}
-      </div>
-    );
+  React.useEffect(() => {
+    const key = import.meta.env.VITE_GOOGLE_MAPS_API_KEY;
+    const rawInput = park?.imageUrlRaw || park?.imageUrl || "";
+    const rawString = typeof rawInput === "string" ? rawInput : String(rawInput || "");
+    const formulaMatch = rawString.match(/^=image\(["']?([^"')]+)["']?\)$/i);
+    const extractedUrl = rawString.match(/https?:\/\/[^\s")]+/i)?.[0];
+    const raw = extractedUrl || (formulaMatch ? formulaMatch[1] : rawString);
+
+    // 1️⃣ No photo data at all
+    if (!raw) {
+      setImgSrc("https://placehold.co/600x400?text=Playground+Photo+Coming+Soon&font=roboto");
+      return;
+    }
+
+    let directUrl = "";
+
+    // 2️⃣ Full Google Maps API photo URL (already formatted)
+    if (raw.includes("maps.googleapis.com/maps/api/place/photo")) {
+      directUrl = raw;
+    }
+    // 3️⃣ Plain photo reference code (looks like a long random ID)
+    else if (/^[A-Za-z0-9_-]{50,}$/.test(raw) && key) {
+      directUrl = `https://maps.googleapis.com/maps/api/place/photo?maxwidth=800&photoreference=${raw}&key=${key}`;
+    }
+    // 4️⃣ Regular web or Google Drive URL — now proxied to avoid CORS
+    else if (raw.startsWith("http")) {
+      const proxyBase = "https://script.google.com/macros/s/AKfycbzaKleMyq37103scfD1SeRerz71mnWFQNu7SnAvRHFq8JDKaxmVq5NFxeA1kN6eVJKQ/exec";
+      directUrl = `${proxyBase}?url=${encodeURIComponent(raw)}`;
+    }
+    // 5️⃣ Street View fallback (when we have coordinates)
+    else if (park.lat && park.lng && key) {
+      directUrl = `https://maps.googleapis.com/maps/api/streetview?size=600x400&location=${park.lat},${park.lng}&key=${key}`;
+    }
+    // 6️⃣ Last resort: cheerful placeholder
+    else {
+      directUrl = "https://placehold.co/600x400?text=Playground+Photo+Coming+Soon&font=roboto";
+    }
+
+    setImgSrc(directUrl);
+  }, [park?.imageUrlRaw, park?.imageUrl, park?.lat, park?.lng]);
 
   return (
     <img
       src={imgSrc}
-      alt={park.name}
+      alt={park?.name || "Playground Photo"}
       className="rounded-lg w-full h-28 object-cover"
+      onError={() =>
+        setImgSrc("https://placehold.co/600x400?text=Playground+Photo+Coming+Soon&font=roboto")
+      }
     />
   );
 }

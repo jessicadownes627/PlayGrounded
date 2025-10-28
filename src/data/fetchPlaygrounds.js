@@ -10,10 +10,25 @@ export async function fetchPlaygrounds() {
   }
 
   try {
-    const res = await fetch(url, { cache: "no-store" });
-    if (!res.ok) throw new Error(`Sheet fetch failed ${res.status}`);
+    // ✅ Use a working CORS-safe proxy (Cloudflare mirror of AllOrigins)
+    const proxyUrl = `https://api.allorigins.workers.dev/get?url=${encodeURIComponent(url)}`;
 
-    const json = await res.json();
+    let json;
+    try {
+      const proxyRes = await fetch(proxyUrl);
+      if (!proxyRes.ok) throw new Error(`Proxy fetch failed ${proxyRes.status}`);
+
+      const proxyJson = await proxyRes.json();
+      json = JSON.parse(proxyJson.contents);
+    } catch (err) {
+      console.warn("⚠️ Proxy failed, falling back to direct fetch:", err);
+      const res = await fetch(`https://corsproxy.io/?${encodeURIComponent(url)}`, {
+        cache: "no-store",
+      });
+
+      json = await res.json();
+    }
+
     console.log("🧠 Raw JSON from Apps Script:", json);
 
     const data = Array.isArray(json)
@@ -28,6 +43,8 @@ export async function fetchPlaygrounds() {
     // ✅ Normalize data and include adaptiveEquipment + imageUrl
     const cleaned = data
       .map((p) => {
+        const apiKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY;
+        const hasApiKey = typeof apiKey === "string" && apiKey.trim().length > 0;
         const lat =
           parseFloat(p.lat) ||
           parseFloat(p.Lat) ||
@@ -41,13 +58,41 @@ export async function fetchPlaygrounds() {
 
         if (!isFinite(lat) || !isFinite(lng)) return null;
 
-        // ✅ normalize imageUrl — handle embedded IMAGE() formulas
+        // ✅ normalise any photo inputs coming from the sheet / Apps Script
+        const rawImageFields = [
+          p.imageUrl,
+          p.image,
+          p.photo,
+          p.photoUrl,
+          p.photo_url,
+        ].find((value) => typeof value === "string" && value.trim().length > 0);
+        const cleanedLink =
+          typeof rawImageFields === "string"
+            ? rawImageFields.match(/https?:\/\/[^\s")]+/i)?.[0] ?? rawImageFields
+            : "";
+        const photoRefCandidate =
+          p.imageUrlRaw ||
+          p.photoReference ||
+          p.photo_reference ||
+          p.photoRef ||
+          p.placePhotoRef;
+
         let imageUrl = "";
-        if (typeof p.imageUrl === "string") {
-          // If it looks like =IMAGE("https://...")
-          const match = p.imageUrl.match(/https?:\/\/[^\s")]+/);
-          if (match) imageUrl = match[0];
-          else imageUrl = p.imageUrl;
+        if (typeof cleanedLink === "string" && cleanedLink.startsWith("http")) {
+          imageUrl = cleanedLink;
+        } else if (
+          typeof photoRefCandidate === "string" &&
+          photoRefCandidate.trim().length > 45
+        ) {
+          if (hasApiKey) {
+            imageUrl = `https://maps.googleapis.com/maps/api/place/photo?maxwidth=800&photoreference=${photoRefCandidate
+              .trim()
+              .replace(/\s+/g, "")}&key=${apiKey}`;
+          }
+        }
+        // Fall back to any direct URL if the ref lookup failed.
+        if (!imageUrl && cleanedLink && cleanedLink.startsWith("http")) {
+          imageUrl = cleanedLink;
         }
 
         return {
@@ -75,6 +120,13 @@ export async function fetchPlaygrounds() {
           notes: p.notes ?? "",
           city: p.city ?? "",
           state: p.state ?? "",
+          seating: p.seating ?? "",
+          packList: p.packList ?? p.pack_list ?? p.pack_items ?? "",
+          parentTip: p.parentTip ?? p.parent_tip ?? "",
+          imageUrlRaw:
+            typeof photoRefCandidate === "string" && photoRefCandidate.trim()
+              ? photoRefCandidate.trim()
+              : cleanedLink,
           // 👇 here's the fix
           imageUrl,
         };
