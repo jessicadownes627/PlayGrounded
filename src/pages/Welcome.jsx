@@ -60,7 +60,9 @@ export default function Welcome() {
         transition={{ delay: 0.2, duration: 0.6 }}
         className="bg-white/80 backdrop-blur-md border border-[#b7ece2] rounded-3xl shadow-2xl p-8 w-11/12 max-w-md text-center z-10"
       >
-        <h1 className="text-4xl font-extrabold mb-2">PlayGrounded</h1>
+        <h1 className="text-[42px] font-extrabold leading-tight mb-2">
+          <span className="text-[#f06292]">Hey!</span> PlayGrounded
+        </h1>
         <p className="text-[#22665e] italic mb-6">
           Helping families find the best places to play — together.
         </p>
@@ -72,7 +74,7 @@ export default function Welcome() {
             animate={{ opacity: 1, y: 0 }}
             className="text-lg font-semibold mb-6 text-[#0a2540]"
           >
-            Where are we playing today?
+            Hey! Who&rsquo;s playing today?
           </motion.p>
         )}
 

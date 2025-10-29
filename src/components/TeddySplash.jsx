@@ -47,7 +47,7 @@ export default function TeddySplash() {
         transition={{ duration: 1.2, ease: "easeOut" }}
         className="text-4xl md:text-6xl font-bold tracking-tight mb-3"
       >
-        PlayGrounded
+        <span className="text-[#f06292]">Hey!</span> PlayGrounded
       </motion.h1>
 
       {/* 💬 Tagline */}
@@ -58,7 +58,7 @@ export default function TeddySplash() {
         transition={{ delay: 0.8, duration: 1 }}
         className="text-lg italic"
       >
-        Finding the best vibes near you 🌳
+        Hey! Let&rsquo;s find your next play adventure 🌳
       </motion.p>
 
       {/* ⏳ Loading Dots */}
@@ -105,4 +105,3 @@ export default function TeddySplash() {
     </motion.div>
   );
 }
-

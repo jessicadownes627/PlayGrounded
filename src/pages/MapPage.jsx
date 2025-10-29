@@ -449,12 +449,13 @@ export default function MapPage() {
                 })}
               </GoogleMap>
             ) : (
-              <div className="w-full h-full flex items-center justify-center text-sm opacity-70">
-                Loading map…
-              </div>
-            )}
-          </div>
+            <div className="w-full h-full flex flex-col items-center justify-center text-sm opacity-70 gap-1">
+              <span className="text-base font-semibold text-[#6a00f4]">Hey! Hang tight…</span>
+              <span>Loading the map.</span>
+            </div>
+          )}
         </div>
+      </div>
 
         <aside className="w-full max-w-3xl mx-auto lg:max-w-sm">
           <div className="flex flex-col gap-4 h-full">
