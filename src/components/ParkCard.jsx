@@ -6,6 +6,7 @@ import { useCrowdSense } from "../hooks/useCrowdSense.js";
 
 export default function ParkCard({ park, isSelected }) {
   const { filters } = useUser();
+  const [shareSuccess, setShareSuccess] = useState(false);
 
   /* ---------- Parent Tips (Google Sheet) ---------- */
   const [tips, setTips] = useState([]);
@@ -57,6 +58,12 @@ export default function ParkCard({ park, isSelected }) {
     isSubmitting: crowdUpdating,
   } = useCrowdSense(park?.id);
 
+  useEffect(() => {
+    if (!shareSuccess) return undefined;
+    const timer = setTimeout(() => setShareSuccess(false), 4000);
+    return () => clearTimeout(timer);
+  }, [shareSuccess]);
+
   /* ---------- Matching / Features ---------- */
   const selected = useMemo(
     () => Object.keys(filters || {}).filter((k) => !!filters[k]),
@@ -102,8 +109,10 @@ export default function ParkCard({ park, isSelected }) {
   /* ---------- Render ---------- */
   return (
     <div
-      className={`grid grid-cols-1 md:grid-cols-3 gap-6 p-6 rounded-3xl bg-white/90 backdrop-blur-md border border-white/60 shadow-[0_8px_25px_rgba(0,0,0,0.08)] ${
-        isSelected ? "ring-2 ring-[#a8e0ff]" : ""
+      className={`grid grid-cols-1 md:grid-cols-3 gap-6 p-6 rounded-3xl backdrop-blur-md border border-white/60 transition-all duration-200 ease-out ${
+        isSelected
+          ? "bg-white shadow-[0_20px_45px_rgba(106,0,244,0.25)] ring-2 ring-[#6a00f4] scale-[1.01]"
+          : "bg-white/90 shadow-[0_8px_25px_rgba(0,0,0,0.08)] hover:shadow-[0_12px_30px_rgba(0,0,0,0.12)]"
       }`}
     >
       {/* LEFT — Smart Info */}
@@ -139,15 +148,15 @@ export default function ParkCard({ park, isSelected }) {
             🌐 Website
           </a>
         )}
-        <div className="flex gap-2 mb-2">
+        <div className="flex flex-wrap gap-2 mb-2">
           {park.instagram && (
             <a
               href={park.instagram}
               target="_blank"
               rel="noopener noreferrer"
-              title="Instagram"
+              className="px-2 py-1 rounded-full bg-[#f06292]/15 text-[#c53d6f] text-[11px] font-semibold hover:bg-[#f06292]/25 transition"
             >
-              <img src="/icons/instagram.svg" alt="Instagram" className="w-4 h-4" />
+              Instagram ↗
             </a>
           )}
           {park.facebook && (
@@ -155,12 +164,16 @@ export default function ParkCard({ park, isSelected }) {
               href={park.facebook}
               target="_blank"
               rel="noopener noreferrer"
-              title="Facebook"
+              className="px-2 py-1 rounded-full bg-[#1877f2]/15 text-[#1b4da3] text-[11px] font-semibold hover:bg-[#1877f2]/25 transition"
             >
-              <img src="/icons/facebook.svg" alt="Facebook" className="w-4 h-4" />
+              Facebook ↗
             </a>
           )}
         </div>
+
+        <p className="text-[10px] text-[#6a00f4]/80 mb-2">
+          Tap this card to spotlight it on the map.
+        </p>
 
         {description && (
           <p className="italic text-sm text-[#0e3325] mb-2">{description}</p>
@@ -211,7 +224,12 @@ export default function ParkCard({ park, isSelected }) {
       )}
 
       {/* RIGHT — Family Toolkit 2.0 */}
-      <FamilyToolkit park={park} tips={tips} />
+      <FamilyToolkit
+        park={park}
+        tips={tips}
+        shareSuccess={shareSuccess}
+        onShare={() => setShareSuccess(true)}
+      />
     </div>
   );
 }
@@ -376,7 +394,7 @@ function OutdoorLiveLook({ weather, counts, vote, status, updating, record }) {
       </div>
 
       <p className="text-[11px] text-gray-600 border-t border-yellow-100 pt-2 leading-relaxed">
-        Clean = litter-free · Conditions = safe/dry · Crowded = busy now · Concerns = damage/issues · Closed = not open · Treats = dessert truck spotted.
+        Clean = litter-free · Conditions = dry equipment/ground · Crowded = busy now · Concerns = safety alerts · Closed = not open · Treats = ice cream truck spotted.
       </p>
     </div>
   );
@@ -430,10 +448,11 @@ function IndoorVibeTile({ park, counts, status, vote, updating, record }) {
 }
 
 /* ---------- Family Toolkit 2.0 ---------- */
-function FamilyToolkit({ park, tips }) {
+function FamilyToolkit({ park, tips, shareSuccess, onShare }) {
   const hasTips = tips?.length > 0;
   const highlightTip = hasTips ? tips[0] : null;
   const extraTips = hasTips ? tips.slice(1, 3) : [];
+
 
   const highlights = [];
   if (park.shade) highlights.push("🪑 Shaded seating spots");
@@ -461,7 +480,15 @@ function FamilyToolkit({ park, tips }) {
 
   return (
     <div className="rounded-2xl border border-pink-100 bg-[#fff7fb] p-4 flex flex-col gap-4">
-      <ParkPhoto park={park} />
+      <div className="space-y-2">
+        <ParkPhoto park={park} />
+        <ShareTipLink park={park} onShare={onShare} />
+        {shareSuccess && (
+          <div className="bg-white/90 border border-[#f06292]/40 text-[#c53d6f] text-xs rounded-lg px-3 py-2 shadow-sm">
+            Thanks! The form opened in a new tab—feel free to add a photo or tip.
+          </div>
+        )}
+      </div>
       <div className="space-y-3">
         <div>
           <h4 className="text-sm font-semibold text-[#0a2540] mb-1">🧺 Family Toolkit</h4>
@@ -483,7 +510,7 @@ function FamilyToolkit({ park, tips }) {
           </ul>
         </div>
 
-        {highlightTip ? (
+        {highlightTip && (
           <div className="bg-white/80 border border-pink-100 rounded-lg p-3 text-xs text-[#0a2540] space-y-2">
             <p className="font-semibold">Parent Tip</p>
             <p>💬 {highlightTip}</p>
@@ -492,10 +519,6 @@ function FamilyToolkit({ park, tips }) {
                 • {t}
               </p>
             ))}
-          </div>
-        ) : (
-          <div className="bg-white/70 border border-dashed border-pink-200 rounded-lg p-3 text-[11px] text-[#0a2540]">
-            💡 Know a secret about this spot? Tap a crowd button or DM us to add a parent tip!
           </div>
         )}
 
@@ -529,58 +552,90 @@ function CButton({ icon, label, count, onClick, disabled }) {
   );
 }
 
+const PROXY_BASE =
+  "https://script.google.com/macros/s/AKfycbzaKleMyq37103scfD1SeRerz71mnWFQNu7SnAvRHFq8JDKaxmVq5NFxeA1kN6eVJKQ/exec";
+
 function ParkPhoto({ park }) {
   const [imgSrc, setImgSrc] = React.useState(null);
 
   React.useEffect(() => {
     const key = import.meta.env.VITE_GOOGLE_MAPS_API_KEY;
-    const rawInput = park?.imageUrlRaw || park?.imageUrl || "";
-    const rawString = typeof rawInput === "string" ? rawInput : String(rawInput || "");
-    const formulaMatch = rawString.match(/^=image\(["']?([^"')]+)["']?\)$/i);
-    const extractedUrl = rawString.match(/https?:\/\/[^\s")]+/i)?.[0];
-    const raw = extractedUrl || (formulaMatch ? formulaMatch[1] : rawString);
+    const override = typeof park?.photoOverride === "string" ? park.photoOverride.trim() : "";
+    const normalized = typeof park?.imageUrl === "string" ? park.imageUrl.trim() : "";
+    const rawValue = typeof park?.imageUrlRaw === "string" ? park.imageUrlRaw.trim() : "";
+    const candidate = override || normalized || rawValue;
 
-    // 1️⃣ No photo data at all
-    if (!raw) {
+    if (!candidate) {
       setImgSrc("https://placehold.co/600x400?text=Playground+Photo+Coming+Soon&font=roboto");
       return;
     }
 
+    const ensureProxy = (url) => `${PROXY_BASE}?url=${encodeURIComponent(url)}`;
+    const isGooglePhoto = candidate.includes("maps.googleapis.com/maps/api/place/photo");
+    const isStreetView = candidate.includes("maps.googleapis.com/maps/api/streetview");
+
     let directUrl = "";
 
-    // 2️⃣ Full Google Maps API photo URL (already formatted)
-    if (raw.includes("maps.googleapis.com/maps/api/place/photo")) {
-      directUrl = raw;
-    }
-    // 3️⃣ Plain photo reference code (looks like a long random ID)
-    else if (/^[A-Za-z0-9_-]{50,}$/.test(raw) && key) {
-      directUrl = `https://maps.googleapis.com/maps/api/place/photo?maxwidth=800&photoreference=${raw}&key=${key}`;
-    }
-    // 4️⃣ Regular web or Google Drive URL — now proxied to avoid CORS
-    else if (raw.startsWith("http")) {
-      const proxyBase = "https://script.google.com/macros/s/AKfycbzaKleMyq37103scfD1SeRerz71mnWFQNu7SnAvRHFq8JDKaxmVq5NFxeA1kN6eVJKQ/exec";
-      directUrl = `${proxyBase}?url=${encodeURIComponent(raw)}`;
-    }
-    // 5️⃣ Street View fallback (when we have coordinates)
-    else if (park.lat && park.lng && key) {
+    if (override) {
+      directUrl = ensureProxy(override);
+    } else if (isGooglePhoto || isStreetView) {
+      directUrl = candidate;
+    } else if (/^[A-Za-z0-9_-]{50,}$/.test(candidate) && key) {
+      directUrl = `https://maps.googleapis.com/maps/api/place/photo?maxwidth=800&photoreference=${candidate}&key=${key}`;
+    } else if (candidate.startsWith("http")) {
+      directUrl = ensureProxy(candidate);
+    } else if (park.lat && park.lng && key) {
       directUrl = `https://maps.googleapis.com/maps/api/streetview?size=600x400&location=${park.lat},${park.lng}&key=${key}`;
-    }
-    // 6️⃣ Last resort: cheerful placeholder
-    else {
+    } else {
       directUrl = "https://placehold.co/600x400?text=Playground+Photo+Coming+Soon&font=roboto";
     }
 
     setImgSrc(directUrl);
-  }, [park?.imageUrlRaw, park?.imageUrl, park?.lat, park?.lng]);
+  }, [park?.photoOverride, park?.imageUrl, park?.imageUrlRaw, park?.lat, park?.lng]);
 
   return (
-    <img
-      src={imgSrc}
-      alt={park?.name || "Playground Photo"}
-      className="rounded-lg w-full h-28 object-cover"
-      onError={() =>
-        setImgSrc("https://placehold.co/600x400?text=Playground+Photo+Coming+Soon&font=roboto")
-      }
-    />
+    <div className="flex flex-col gap-1">
+      <img
+        src={imgSrc}
+        alt={park?.name || "Playground Photo"}
+        className="rounded-lg w-full h-28 object-cover"
+        onError={() =>
+          setImgSrc("https://placehold.co/600x400?text=Playground+Photo+Coming+Soon&font=roboto")
+        }
+      />
+      {park?.photoCredit && (
+        <p className="text-[10px] text-gray-500 italic flex items-center gap-1">
+          <span>📸</span>
+          <span>{park.photoCredit}</span>
+        </p>
+      )}
+    </div>
+  );
+}
+
+const FORM_BASE_URL =
+  "https://docs.google.com/forms/d/e/1FAIpQLSerLfBMbloLDgqR3ebZKkYGea-FMkuAqm3ljlWMZwqWUHesWw/viewform?usp=pp_url&";
+const FORM_PARAM_NAME = "entry.1153606241=";
+const FORM_PARAM_ID = "entry.624997259=";
+
+function ShareTipLink({ park, onShare }) {
+  if (!park?.name || !park?.id) return null;
+  const href = `${FORM_BASE_URL}${FORM_PARAM_NAME}${encodeURIComponent(
+    park.name
+  )}&${FORM_PARAM_ID}${encodeURIComponent(park.id)}`;
+  return (
+    <a
+      href={href}
+      target="_blank"
+      rel="noopener noreferrer"
+      onClick={() => onShare?.()}
+      className="inline-flex items-center gap-2 text-sm text-[#6a00f4] hover:text-[#45009d] font-semibold mb-2"
+      title="Share a photo or tip for this playground"
+    >
+      <span role="img" aria-hidden="true">
+        📷
+      </span>
+      Share a photo or tip
+    </a>
   );
 }

@@ -59,6 +59,14 @@ export async function fetchPlaygrounds() {
         if (!isFinite(lat) || !isFinite(lng)) return null;
 
         // ✅ normalise any photo inputs coming from the sheet / Apps Script
+        const overrideUrlCandidate =
+          (typeof p.photoOverride === "string" && p.photoOverride.trim()) ||
+          (typeof p.photo_override === "string" && p.photo_override.trim()) ||
+          "";
+        const overrideUrl =
+          overrideUrlCandidate && overrideUrlCandidate.match(/^https?:\/\//i)
+            ? overrideUrlCandidate
+            : "";
         const rawImageFields = [
           p.imageUrl,
           p.image,
@@ -78,8 +86,13 @@ export async function fetchPlaygrounds() {
           p.placePhotoRef;
 
         let imageUrl = "";
-        if (typeof cleanedLink === "string" && cleanedLink.startsWith("http")) {
+        let imageUrlRaw = cleanedLink;
+        if (overrideUrl) {
+          imageUrl = overrideUrl;
+          imageUrlRaw = overrideUrl;
+        } else if (typeof cleanedLink === "string" && cleanedLink.startsWith("http")) {
           imageUrl = cleanedLink;
+          imageUrlRaw = cleanedLink;
         } else if (
           typeof photoRefCandidate === "string" &&
           photoRefCandidate.trim().length > 45
@@ -88,11 +101,13 @@ export async function fetchPlaygrounds() {
             imageUrl = `https://maps.googleapis.com/maps/api/place/photo?maxwidth=800&photoreference=${photoRefCandidate
               .trim()
               .replace(/\s+/g, "")}&key=${apiKey}`;
+            imageUrlRaw = photoRefCandidate.trim();
           }
         }
         // Fall back to any direct URL if the ref lookup failed.
         if (!imageUrl && cleanedLink && cleanedLink.startsWith("http")) {
           imageUrl = cleanedLink;
+          imageUrlRaw = cleanedLink;
         }
 
         return {
@@ -123,10 +138,14 @@ export async function fetchPlaygrounds() {
           seating: p.seating ?? "",
           packList: p.packList ?? p.pack_list ?? p.pack_items ?? "",
           parentTip: p.parentTip ?? p.parent_tip ?? "",
-          imageUrlRaw:
-            typeof photoRefCandidate === "string" && photoRefCandidate.trim()
-              ? photoRefCandidate.trim()
-              : cleanedLink,
+          photoOverride: overrideUrl,
+          photoCredit:
+            typeof p.photoCredit === "string"
+              ? p.photoCredit.trim()
+              : typeof p.photo_credit === "string"
+              ? p.photo_credit.trim()
+              : "",
+          imageUrlRaw,
           // 👇 here's the fix
           imageUrl,
         };

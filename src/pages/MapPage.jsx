@@ -3,6 +3,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   GoogleMap,
   OverlayView,
+  Circle,
   useJsApiLoader,
 } from "@react-google-maps/api";
 import { useLocation } from "react-router-dom";
@@ -17,13 +18,19 @@ export default function MapPage() {
   const [parks, setParks] = useState([]);
   const [selectedPark, setSelectedPark] = useState(null);
   const [center, setCenter] = useState(defaultCenter);
+  const defaultRadiusSetting = Number(import.meta.env.VITE_DEFAULT_RADIUS_MILES);
+  const fallbackRadius = Number.isFinite(defaultRadiusSetting) && defaultRadiusSetting > 0 ? defaultRadiusSetting : 25;
   const [showAll, setShowAll] = useState(false);
-  const [amenityFilter, setAmenityFilter] = useState(null);
+  const [radiusMiles, setRadiusMiles] = useState(fallbackRadius);
+  const [amenityFilters, setAmenityFilters] = useState([]);
+  const [zoom, setZoom] = useState(12);
+  const [searchQuery, setSearchQuery] = useState("");
   const mapRef = useRef(null);
   const location = useLocation();
 
   const activeFilters = location.state?.filters || [];
   const playMode = location.state?.playMode || "outdoor"; // indoor or outdoor
+  const isIndoorMode = playMode === "indoor";
 
   const { isLoaded } = useJsApiLoader({
     id: "google-map-script",
@@ -53,11 +60,19 @@ export default function MapPage() {
   useEffect(() => {
     if (!navigator.geolocation) return;
     navigator.geolocation.getCurrentPosition(
-      (pos) =>
-        setCenter({
+      (pos) => {
+        const nextCenter = {
           lat: pos.coords.latitude,
           lng: pos.coords.longitude,
-        }),
+        };
+        setCenter(nextCenter);
+        const closerZoom = 13;
+        setZoom((prev) => Math.max(prev, closerZoom));
+        if (mapRef.current) {
+          mapRef.current.panTo(nextCenter);
+          mapRef.current.setZoom(closerZoom);
+        }
+      },
       () => {},
       { enableHighAccuracy: true, timeout: 5000 }
     );
@@ -78,8 +93,7 @@ export default function MapPage() {
   };
 
   /* ---------- Ranking ---------- */
-  const radiusSetting = Number(import.meta.env.VITE_DEFAULT_RADIUS_MILES);
-  const maxRadiusMiles = Number.isFinite(radiusSetting) && radiusSetting > 0 ? radiusSetting : 25;
+  const maxRadiusMiles = Number.isFinite(radiusMiles) && radiusMiles > 0 ? radiusMiles : fallbackRadius;
 
   const rankedParks = parks
     .map((p) => {
@@ -109,6 +123,19 @@ export default function MapPage() {
       return p.distance <= maxRadiusMiles;
     })
     .sort((a, b) => b.matchPercent - a.matchPercent || a.distance - b.distance);
+
+  const normalizedQuery = searchQuery.trim().toLowerCase();
+  const nounSingular = isIndoorMode ? "play space" : "park";
+  const nounPlural = isIndoorMode ? "play spaces" : "parks";
+  const nounPluralCapitalized = isIndoorMode ? "Play Spaces" : "Parks";
+
+  const searchFiltered = useMemo(() => {
+    if (!normalizedQuery) return rankedParks;
+    return rankedParks.filter((park) =>
+      park?.name?.toLowerCase().includes(normalizedQuery)
+    );
+  }, [rankedParks, normalizedQuery]);
+  const searchMatchesCount = searchFiltered.length;
 
   const getParkDomId = (park) => {
     const prime =
@@ -145,15 +172,27 @@ export default function MapPage() {
   };
 
   /* ---------- Marker Style ---------- */
-  const getMarkerWrapperStyle = (park) => ({
-    transform: "translate(-50%, -50%)",
-    cursor: "pointer",
-    zIndex: selectedPark?.id === park.id ? 9999 : 1,
-    filter:
-      selectedPark?.id === park.id
-        ? "drop-shadow(0 0 8px gold)"
-        : "drop-shadow(0 0 3px rgba(0,0,0,0.25))",
-  });
+  const getMarkerWrapperStyle = (park, { dimmed = false } = {}) => {
+    const baseTransform = "translate(-50%, -50%)";
+    return {
+      transform:
+        selectedPark?.id === park.id
+          ? `${baseTransform} scale(1.1)`
+          : dimmed
+          ? `${baseTransform} scale(0.9)`
+          : baseTransform,
+      cursor: "pointer",
+      opacity: selectedPark?.id === park.id ? 1 : dimmed ? 0.4 : 1,
+      zIndex: selectedPark?.id === park.id ? 9999 : dimmed ? 0 : 1,
+      filter:
+        selectedPark?.id === park.id
+          ? "drop-shadow(0 0 12px rgba(106,0,244,0.9))"
+          : dimmed
+          ? "grayscale(0.4) drop-shadow(0 0 1px rgba(0,0,0,0.1))"
+          : "drop-shadow(0 0 3px rgba(0,0,0,0.25))",
+      transition: "all 0.2s ease",
+    };
+  };
 
   const amenityDefinitions = useMemo(
     () => [
@@ -178,34 +217,85 @@ export default function MapPage() {
   };
 
   const amenityStats = useMemo(() => {
-    if (!rankedParks.length) return [];
+    if (!searchFiltered.length) return [];
     return amenityDefinitions
       .map((def) => {
-        const count = rankedParks.reduce(
+        const count = searchFiltered.reduce(
           (sum, park) => sum + (hasAmenity(def.get?.(park)) ? 1 : 0),
           0
         );
-        const pct = count > 0 ? Math.round((count / rankedParks.length) * 100) : 0;
+        const pct = count > 0 ? Math.round((count / searchFiltered.length) * 100) : 0;
         return { ...def, count, pct };
       })
       .filter((stat) => stat.count > 0);
-  }, [rankedParks, amenityDefinitions]);
+  }, [searchFiltered, amenityDefinitions]);
 
-  const activeAmenity = amenityDefinitions.find((a) => a.id === amenityFilter) || null;
+  const activeAmenities = useMemo(
+    () => amenityDefinitions.filter((a) => amenityFilters.includes(a.id)),
+    [amenityDefinitions, amenityFilters]
+  );
 
   const handleAmenityToggle = (id) => {
-    setAmenityFilter((prev) => (prev === id ? null : id));
+    setAmenityFilters((prev) => {
+      const exists = prev.includes(id);
+      if (exists) return prev.filter((item) => item !== id);
+      if (prev.length >= 3) return [...prev.slice(1), id];
+      return [...prev, id];
+    });
     setShowAll(false);
   };
 
-  const filteredParks = activeAmenity
-    ? rankedParks.filter((park) => hasAmenity(activeAmenity.get?.(park)))
-    : rankedParks;
+  const handleRadiusChange = (event) => {
+    const value = Number(event.target.value);
+    if (Number.isFinite(value)) {
+      setRadiusMiles(value);
+      setShowAll(false);
+    }
+  };
 
-  const cardSource = amenityFilter ? filteredParks : rankedParks;
+  const handleSearchChange = (event) => {
+    setSearchQuery(event.target.value);
+    setShowAll(false);
+  };
+
+  const handleSearchClear = () => {
+    setSearchQuery("");
+    setShowAll(false);
+  };
+
+  const filterLabelMap = useMemo(
+    () => ({
+      fenced: "Fenced in",
+      dogs: "Allows dogs",
+      bathrooms: "Bathrooms",
+      shade: "Shade",
+      parking: "Easy parking",
+      lighting: "Lighting",
+      adaptiveEquipment: "Adaptive equipment",
+      indoorPlayArea: "Indoor play area",
+    }),
+    []
+  );
+
+  const filteredParks = useMemo(() => {
+    if (!amenityFilters.length) return searchFiltered;
+    if (!activeAmenities.length) return [];
+    return searchFiltered.filter((park) =>
+      activeAmenities.every((amenity) => hasAmenity(amenity.get?.(park)))
+    );
+  }, [searchFiltered, amenityFilters, activeAmenities]);
+
+  const cardSource = filteredParks;
   const cardsTotal = cardSource.length;
   const visibleParks = showAll ? cardSource : cardSource.slice(0, 10);
-  const mapParks = rankedParks;
+  const mapParks = searchFiltered;
+  const matchesCount = rankedParks.length;
+  const highlightedCount = filteredParks.length;
+  const showingCount = visibleParks.length;
+  const mustHaveLabels = useMemo(
+    () => activeFilters.map((key) => filterLabelMap[key] || key),
+    [activeFilters, filterLabelMap]
+  );
 
   /* ---------- Render ---------- */
   return (
@@ -225,6 +315,27 @@ export default function MapPage() {
         )}
       </header>
 
+      <div className="mt-4 px-4 md:px-6">
+        <div className="relative max-w-3xl mx-auto">
+          <input
+            value={searchQuery}
+            onChange={handleSearchChange}
+            type="search"
+            placeholder={`Search by ${nounSingular} name`}
+            className="w-full rounded-full border border-[#aacbff] bg-white/90 px-4 py-2 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-[#5fa8ff] focus:border-transparent"
+          />
+          {searchQuery && (
+            <button
+              type="button"
+              onClick={handleSearchClear}
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-[11px] text-[#0a6cff] hover:text-[#0647a6]"
+            >
+              Clear
+            </button>
+          )}
+        </div>
+      </div>
+
       <section className="flex flex-col gap-4 mt-4 px-4 md:px-6 lg:flex-row lg:items-stretch lg:justify-center">
         <div className="flex-1 flex justify-center">
           <div className="relative w-full max-w-3xl aspect-square rounded-3xl overflow-hidden bg-white/90 backdrop-blur-md shadow-[0_10px_35px_rgba(0,0,0,0.15)] border border-white/50">
@@ -232,8 +343,15 @@ export default function MapPage() {
               <GoogleMap
                 mapContainerStyle={{ width: "100%", height: "100%" }}
                 center={center}
-                zoom={11}
-                onLoad={(map) => (mapRef.current = map)}
+                zoom={zoom}
+                onLoad={(map) => {
+                  mapRef.current = map;
+                  map.setZoom(zoom);
+                }}
+                onZoomChanged={() => {
+                  const current = mapRef.current?.getZoom();
+                  if (typeof current === "number") setZoom(current);
+                }}
                 options={{
                   disableDefaultUI: true,
                   zoomControl: true,
@@ -256,24 +374,42 @@ export default function MapPage() {
                   ],
                 }}
               >
-                {mapParks.map((p, i) => {
-                  const lat = Number(p.lat);
-                  const lng = Number(p.lng);
-                  if (isNaN(lat) || isNaN(lng)) return null;
+              <Circle
+                center={center}
+                radius={Math.max(radiusMiles, 1) * 1609.34}
+                options={{
+                  strokeColor: "#6a00f4",
+                  strokeOpacity: 0.4,
+                  strokeWeight: 1.5,
+                  fillColor: "#6a00f4",
+                  fillOpacity: 0.05,
+                }}
+              />
 
-                  const isIndoor = playMode === "indoor";
+              {mapParks.map((p, i) => {
+                const lat = Number(p.lat);
+                const lng = Number(p.lng);
+                if (isNaN(lat) || isNaN(lng)) return null;
 
-                  return (
-                    <OverlayView
-                      key={p.id || i}
-                      position={{ lat, lng }}
-                      mapPaneName={OverlayView.OVERLAY_MOUSE_TARGET}
+                const isIndoor = playMode === "indoor";
+                const isAmenityMatch =
+                  !amenityFilters.length ||
+                  activeAmenities.every((amenity) => hasAmenity(amenity.get?.(p)));
+                const markerKey = p.id ? `${p.id}-${i}` : `${lat}-${lng}-${i}`;
+
+                return (
+                  <OverlayView
+                    key={markerKey}
+                    position={{ lat, lng }}
+                    mapPaneName={OverlayView.OVERLAY_MOUSE_TARGET}
+                  >
+                    <div
+                      style={getMarkerWrapperStyle(p, {
+                        dimmed: amenityFilters.length > 0 && !isAmenityMatch,
+                      })}
+                      onClick={() => handleMarkerClick(p)}
+                      title={p.name}
                     >
-                      <div
-                        style={getMarkerWrapperStyle(p)}
-                        onClick={() => handleMarkerClick(p)}
-                        title={p.name}
-                      >
                         {isIndoor ? (
                           // 🏠 Pink house marker for indoor spaces
                           <svg
@@ -320,96 +456,168 @@ export default function MapPage() {
           </div>
         </div>
 
-        {amenityStats.length > 0 && (
-          <aside className="w-full max-w-3xl mx-auto lg:max-w-sm">
-            <div className="bg-white/85 backdrop-blur-md border border-white/60 rounded-3xl shadow-[0_8px_24px_rgba(0,0,0,0.08)] p-5 h-full flex flex-col">
-              <div className="flex items-baseline justify-between gap-3 flex-wrap">
-                <h2 className="text-sm font-semibold text-[#0a2540]">
-                  🧺 Amenities Snapshot
-                </h2>
-                <p className="text-[11px] text-gray-500">
-                  {filteredParks.length} {filteredParks.length === 1 ? "park" : "parks"} in view
-                </p>
+        <aside className="w-full max-w-3xl mx-auto lg:max-w-sm">
+          <div className="flex flex-col gap-4 h-full">
+            <div className="bg-white/90 backdrop-blur-md border border-white/60 rounded-3xl shadow-[0_8px_24px_rgba(0,0,0,0.08)] p-5">
+              <div className="flex items-center justify-between gap-3 flex-wrap">
+                <h2 className="text-sm font-semibold text-[#0a2540]">🧭 Plan Status</h2>
+                <span className="text-[11px] text-gray-500">
+                  Within {Math.round(maxRadiusMiles)} miles
+                </span>
               </div>
               <p className="text-[11px] text-gray-500 mt-1">
-                Tap a bar to show only parks with that amenity.
+                Tune your search radius and keep an eye on the parks that match your vibe.
               </p>
-              {activeAmenity && (
-                <div className="mt-2 flex items-center justify-between text-[11px] text-[#0a2540]">
-                  <span>
-                    Filtering by <strong>{activeAmenity.label}</strong>
-                  </span>
-                  <button
-                    onClick={() => setAmenityFilter(null)}
-                    className="text-[#0a6cff] underline underline-offset-2 hover:text-[#0647a6] transition"
-                  >
-                    Clear filter
-                  </button>
+
+              <div className="mt-4">
+                <label
+                  htmlFor="radius-slider"
+                  className="text-xs font-semibold text-[#0a2540] flex justify-between"
+                >
+                  <span>Search radius</span>
+                  <span>{Math.round(radiusMiles)} miles</span>
+                </label>
+                <input
+                  id="radius-slider"
+                  type="range"
+                  min="5"
+                  max="50"
+                  step="1"
+                  value={radiusMiles}
+                  onChange={handleRadiusChange}
+                  className="w-full mt-2 accent-[#5fa8ff]"
+                />
+                <div className="flex justify-between text-[10px] text-gray-400 mt-1">
+                  <span>5 mi</span>
+                  <span>50 mi</span>
                 </div>
-              )}
-              <div className="mt-4 space-y-3">
-                {amenityStats.map((stat) => (
-                  <button
-                    key={stat.id}
-                    type="button"
-                    onClick={() => handleAmenityToggle(stat.id)}
-                    aria-pressed={amenityFilter === stat.id}
-                    className={`w-full text-left rounded-xl px-3 py-2 transition ${
-                      amenityFilter === stat.id
-                        ? "bg-[#e2f3fb] ring-1 ring-[#5fa8ff]"
-                        : "hover:bg-white/70 cursor-pointer"
-                    }`}
-                  >
-                    <div className="flex justify-between text-[11px] text-[#0a2540] mb-1">
-                      <span>{stat.label}</span>
-                      <span className="text-gray-500">
-                        {stat.count} ({stat.pct}%)
-                      </span>
-                    </div>
-                    <div className="h-2 rounded-full bg-[#d8ebff] overflow-hidden">
-                      <div
-                        className={`h-full ${
-                          amenityFilter === stat.id
-                            ? "bg-gradient-to-r from-[#5fa8ff] to-[#9d5cff]"
-                            : "bg-gradient-to-r from-[#8ec5fc] to-[#e0c3fc]"
-                        }`}
-                        style={{
-                          width: `${Math.min(Math.max(stat.pct, 6), 100)}%`,
-                        }}
-                      />
-                    </div>
-                  </button>
-                ))}
               </div>
+
+              <div className="mt-4 text-xs text-[#0a2540] space-y-2">
+                <p>
+                  🎯 Must-haves:{" "}
+                  {mustHaveLabels.length > 0 ? mustHaveLabels.join(", ") : "None selected"}
+                </p>
+                <p>🗺️ Matching parks: {matchesCount}</p>
+                <p>
+                  🔍 Search:{" "}
+                  {normalizedQuery
+                    ? `“${searchQuery.trim()}” — ${searchMatchesCount} match${
+                        searchMatchesCount === 1 ? "" : "es"
+                      }`
+                    : "No search filter"}
+                </p>
+                <p>
+                  ✨ Amenity focus:{" "}
+                  {amenityFilters.length > 0
+                    ? activeAmenities.map((a) => a.label).join(", ")
+                    : "All amenities"}
+                </p>
+                <p>
+                  📋 Showing {showingCount} of {cardsTotal} cards (
+                  {highlightedCount} highlighted on the map)
+                </p>
+              </div>
+              {amenityFilters.length > 0 && (
+                <button
+                  onClick={() => setAmenityFilters([])}
+                  className="mt-4 text-[11px] text-[#0a6cff] underline underline-offset-2 hover:text-[#0647a6] transition"
+                >
+                  Clear amenity filters
+                </button>
+              )}
             </div>
-          </aside>
-        )}
+
+            {amenityStats.length > 0 && (
+              <div className="bg-white/85 backdrop-blur-md border border-white/60 rounded-3xl shadow-[0_8px_24px_rgba(0,0,0,0.08)] p-5 h-full flex flex-col">
+                <div className="flex items-baseline justify-between gap-3 flex-wrap">
+                  <h2 className="text-sm font-semibold text-[#0a2540]">
+                    🧺 Amenities Snapshot
+                  </h2>
+                  <p className="text-[11px] text-gray-500">
+                    {filteredParks.length} {filteredParks.length === 1 ? "park" : "parks"} in view
+                  </p>
+                </div>
+                <p className="text-[11px] text-gray-500 mt-1">
+                  Tap a bar to show only parks with that amenity.
+                </p>
+                <div className="mt-4 space-y-3">
+                  {amenityStats.map((stat) => {
+                    const isActive = amenityFilters.includes(stat.id);
+                    return (
+                      <button
+                        key={stat.id}
+                        type="button"
+                        onClick={() => handleAmenityToggle(stat.id)}
+                        aria-pressed={isActive}
+                        className={`w-full text-left rounded-xl px-3 py-2 transition ${
+                          isActive
+                            ? "bg-[#e2f3fb] ring-1 ring-[#5fa8ff]"
+                            : "hover:bg-white/70 cursor-pointer"
+                        }`}
+                      >
+                        <div className="flex justify-between text-[11px] text-[#0a2540] mb-1">
+                          <span>{stat.label}</span>
+                          <span className="text-gray-500">
+                            {stat.count} ({stat.pct}%)
+                          </span>
+                        </div>
+                        <div className="h-2 rounded-full bg-[#d8ebff] overflow-hidden">
+                          <div
+                            className={`h-full ${
+                              isActive
+                                ? "bg-gradient-to-r from-[#5fa8ff] to-[#9d5cff]"
+                                : "bg-gradient-to-r from-[#8ec5fc] to-[#e0c3fc]"
+                            }`}
+                            style={{
+                              width: `${Math.min(Math.max(stat.pct, 6), 100)}%`,
+                            }}
+                          />
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
+        </aside>
       </section>
 
       {/* Park Cards */}
       <section className="px-4 pt-6 max-w-6xl mx-auto">
         <div className="bg-white/85 backdrop-blur-md border border-white/60 rounded-3xl shadow-[0_8px_18px_rgba(0,0,0,0.08)] p-4 mb-6 text-center">
           <p className="text-sm font-semibold text-[#0a2540]">
-            {amenityFilter && activeAmenity
-              ? `Showing nearby parks with ${activeAmenity.label.toLowerCase()}`
-              : "Closest parks first—scroll the cards to pick your play spot today."}
+            {amenityFilters.length > 0
+              ? `Showing ${nounPlural} with ${activeAmenities
+                  .map((a) => a.label.toLowerCase())
+                  .join(" + ")}`
+              : `Closest ${nounPlural} first—scroll the cards to pick your play spot today.`}
           </p>
           <p className="text-[11px] text-gray-500 mt-1">
             Tap a card to highlight it on the map, or use Live Look to see crowd updates in real time.
           </p>
         </div>
         <div className="grid gap-6">
-          {visibleParks.map((p) => {
+          {visibleParks.map((p, idx) => {
             const domId = getParkDomId(p);
+            const cardKey = p.id ? `${p.id}-${idx}` : domId || idx;
             return (
               <div
-                key={p.id || domId}
+                key={cardKey}
                 id={domId}
-                className={
-                  selectedPark?.id === p.id
-                    ? "ring-2 ring-pink-300 rounded-3xl"
-                    : ""
-                }
+                onClick={() => handleMarkerClick(p)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    handleMarkerClick(p);
+                  }
+                }}
+                role="button"
+                tabIndex={0}
+                className={`cursor-pointer focus:outline-none focus:ring-2 focus:ring-[#6a00f4] rounded-3xl ${
+                  selectedPark?.id === p.id ? "ring-2 ring-pink-300" : ""
+                }`}
               >
                 <ParkCard park={p} isSelected={selectedPark?.id === p.id} />
               </div>
@@ -419,7 +627,7 @@ export default function MapPage() {
       </section>
 
       {/* Show More Button */}
-      {!showAll && filteredParks.length > 10 && (
+      {!showAll && cardsTotal > visibleParks.length && (
         <div className="w-full flex justify-center mt-10 mb-10">
           <button
             onClick={() => setShowAll(true)}
@@ -428,7 +636,7 @@ export default function MapPage() {
                        hover:bg-[#e6f4ff] hover:shadow-lg transition-all duration-200"
           >
             Show More {playMode === "indoor" ? "Play Spaces" : "Parks"} (
-            {filteredParks.length - 10} more)
+            {cardsTotal - visibleParks.length} more)
           </button>
         </div>
       )}
