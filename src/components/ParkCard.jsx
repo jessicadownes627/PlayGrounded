@@ -1,33 +1,35 @@
 // src/components/ParkCard.jsx
 import React, { useEffect, useMemo, useState } from "react";
-import Papa from "papaparse";
 import { useUser } from "../context/UserContext.jsx";
 import { useCrowdSense } from "../hooks/useCrowdSense.js";
 
 export default function ParkCard({ park, isSelected }) {
   const { filters } = useUser();
-  const [shareSuccess, setShareSuccess] = useState(false);
+  const [shareFeedback, setShareFeedback] = useState("");
 
-  /* ---------- Parent Tips (Google Sheet) ---------- */
-  const [tips, setTips] = useState([]);
-  useEffect(() => {
-    if (!park?.name) return;
-    Papa.parse(
-      "https://docs.google.com/spreadsheets/d/e/2PACX-1vRT_TDB9umNVXH0bKUFlxzVFKcrFzJFNqKP68OUDKcxoU52JGOWfBPQCYDiwaDCRkFf5LF4UWMLKzkN/pub?output=csv",
-      {
-        download: true,
-        header: true,
-        complete: (res) => {
-          const rows = (res.data || []).filter(
-            (r) =>
-              (r["Park Name"] || "").trim().toLowerCase() ===
-              (park.name || "").trim().toLowerCase()
-          );
-          setTips(rows.map((r) => r["Tip"]).filter(Boolean));
-        },
-      }
-    );
-  }, [park?.name]);
+  /* ---------- Parent Tips (from sheet payload) ---------- */
+  const tips = useMemo(() => {
+    const parseTips = (value) => {
+      if (!value) return [];
+      return String(value)
+        .split(/[\n\r]+|(?:\s*\|\|\s*)/)
+        .map((tip) => tip.replace(/^[-•\s]+/, "").trim())
+        .filter(Boolean);
+    };
+
+    const merged = [
+      ...parseTips(park?.tipText),
+      ...parseTips(park?.parentTip),
+    ];
+    const seen = new Set();
+    const unique = merged.filter((tip) => {
+      const key = tip.toLowerCase();
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+    return unique.slice(0, 3);
+  }, [park?.tipText, park?.parentTip]);
 
   /* ---------- Weather ---------- */
   const [weather, setWeather] = useState(null);
@@ -59,10 +61,10 @@ export default function ParkCard({ park, isSelected }) {
   } = useCrowdSense(park?.id);
 
   useEffect(() => {
-    if (!shareSuccess) return undefined;
-    const timer = setTimeout(() => setShareSuccess(false), 4000);
+    if (!shareFeedback) return undefined;
+    const timer = setTimeout(() => setShareFeedback(""), 4000);
     return () => clearTimeout(timer);
-  }, [shareSuccess]);
+  }, [shareFeedback]);
 
   /* ---------- Matching / Features ---------- */
   const selected = useMemo(
@@ -109,10 +111,10 @@ export default function ParkCard({ park, isSelected }) {
   /* ---------- Render ---------- */
   return (
     <div
-      className={`grid grid-cols-1 md:grid-cols-3 gap-6 p-6 rounded-3xl backdrop-blur-md border border-white/60 transition-all duration-200 ease-out ${
+      className={`grid grid-cols-1 md:grid-cols-3 gap-6 p-6 rounded-3xl backdrop-blur-md border transition-all duration-200 ease-out ${
         isSelected
-          ? "bg-white shadow-[0_20px_45px_rgba(106,0,244,0.25)] ring-2 ring-[#6a00f4] scale-[1.01]"
-          : "bg-white/90 shadow-[0_8px_25px_rgba(0,0,0,0.08)] hover:shadow-[0_12px_30px_rgba(0,0,0,0.12)]"
+          ? "bg-white shadow-[0_20px_45px_rgba(106,0,244,0.25)] ring-2 ring-[#6a00f4] scale-[1.01] border-black/30"
+          : "bg-white/95 shadow-[0_8px_25px_rgba(0,0,0,0.06)] hover:shadow-[0_12px_30px_rgba(0,0,0,0.12)] border-black/15"
       }`}
     >
       {/* LEFT — Smart Info */}
@@ -227,8 +229,8 @@ export default function ParkCard({ park, isSelected }) {
       <FamilyToolkit
         park={park}
         tips={tips}
-        shareSuccess={shareSuccess}
-        onShare={() => setShareSuccess(true)}
+        shareFeedback={shareFeedback}
+        onShare={(message) => setShareFeedback(message)}
       />
     </div>
   );
@@ -384,17 +386,63 @@ function OutdoorLiveLook({ weather, counts, vote, status, updating, record }) {
         </div>
       </div>
 
+      <p className="text-[11px] text-[#0a2540]/70 -mt-1">
+        Tap a button below to share what you see right now.
+      </p>
+
       <div className="grid grid-cols-2 gap-2 text-xs">
-        <CButton icon="🧼" label="Clean" count={counts.clean} onClick={() => vote("clean")} disabled={updating} />
-        <CButton icon="💧" label="Conditions" count={counts.conditions} onClick={() => vote("conditions")} disabled={updating} />
-        <CButton icon="🚸" label="Crowded" count={counts.crowded} onClick={() => vote("crowded")} disabled={updating} />
-        <CButton icon="😐" label="Concerns" count={counts.concerns} onClick={() => vote("concerns")} disabled={updating} />
-        <CButton icon="🚫" label="Closed" count={counts.closed} onClick={() => vote("closed")} disabled={updating} />
-        <CButton icon="🍦" label="Treats" count={counts.icecream} onClick={() => vote("icecream")} disabled={updating} />
+        <CButton
+          icon="🧼"
+          label="Clean"
+          title="Area is tidy"
+          count={counts.clean}
+          onClick={() => vote("clean")}
+          disabled={updating}
+        />
+        <CButton
+          icon="💧"
+          label="Wet Ground"
+          title="Equipment or surfaces are wet"
+          count={counts.conditions}
+          onClick={() => vote("conditions")}
+          disabled={updating}
+        />
+        <CButton
+          icon="🚸"
+          label="Crowded"
+          title="Lots of people right now"
+          count={counts.crowded}
+          onClick={() => vote("crowded")}
+          disabled={updating}
+        />
+        <CButton
+          icon="😐"
+          label="Concerns"
+          title="Something needs attention"
+          count={counts.concerns}
+          onClick={() => vote("concerns")}
+          disabled={updating}
+        />
+        <CButton
+          icon="🚫"
+          label="Closed"
+          title="Location is closed"
+          count={counts.closed}
+          onClick={() => vote("closed")}
+          disabled={updating}
+        />
+        <CButton
+          icon="🍦"
+          label="Ice Cream"
+          title="Treat truck spotted"
+          count={counts.icecream}
+          onClick={() => vote("icecream")}
+          disabled={updating}
+        />
       </div>
 
       <p className="text-[11px] text-gray-600 border-t border-yellow-100 pt-2 leading-relaxed">
-        Clean = litter-free · Conditions = dry equipment/ground · Crowded = busy now · Concerns = safety alerts · Closed = not open · Treats = ice cream truck spotted.
+        Clean = litter-free · Wet Ground = equipment or surfaces are wet · Crowded = busy now · Concerns = safety alerts · Closed = not open · Ice Cream = treat truck spotted.
       </p>
     </div>
   );
@@ -422,7 +470,7 @@ function IndoorVibeTile({ park, counts, status, vote, updating, record }) {
             : summary.tone === "busy"
             ? "border-orange-200"
             : "border-green-100"
-        } shadow-sm flex items-start gap-3 mb-3`}
+      } shadow-sm flex items-start gap-3 mb-3`}
       >
         <span className="text-2xl leading-none">{summary.emoji}</span>
         <div className="text-xs text-[#0a2540]">
@@ -431,11 +479,39 @@ function IndoorVibeTile({ park, counts, status, vote, updating, record }) {
         </div>
       </div>
 
+      <p className="text-[11px] text-[#0a2540]/70 mb-1">
+        Tap a button below to share the indoor vibe.
+      </p>
+
       <div className="grid grid-cols-2 gap-2 text-xs">
-        <CButton icon="🌿" label="Chill" onClick={() => vote("crowded")} disabled={updating} />
-        <CButton icon="🎉" label="Busy" onClick={() => vote("crowded")} disabled={updating} />
-        <CButton icon="😐" label="Concerns" onClick={() => vote("concerns")} disabled={updating} />
-        <CButton icon="🚫" label="Closed" onClick={() => vote("closed")} disabled={updating} />
+        <CButton
+          icon="🌿"
+          label="Chill"
+          title="Relaxed vibe"
+          onClick={() => vote("crowded")}
+          disabled={updating}
+        />
+        <CButton
+          icon="🎉"
+          label="Busy & Fun"
+          title="High energy right now"
+          onClick={() => vote("crowded")}
+          disabled={updating}
+        />
+        <CButton
+          icon="😐"
+          label="Concerns"
+          title="Something needs attention"
+          onClick={() => vote("concerns")}
+          disabled={updating}
+        />
+        <CButton
+          icon="🚫"
+          label="Closed"
+          title="Location is closed"
+          onClick={() => vote("closed")}
+          disabled={updating}
+        />
       </div>
 
       {park.liveAnnouncement && (
@@ -448,10 +524,14 @@ function IndoorVibeTile({ park, counts, status, vote, updating, record }) {
 }
 
 /* ---------- Family Toolkit 2.0 ---------- */
-function FamilyToolkit({ park, tips, shareSuccess, onShare }) {
+function FamilyToolkit({ park, tips, shareFeedback, onShare }) {
   const hasTips = tips?.length > 0;
   const highlightTip = hasTips ? tips[0] : null;
   const extraTips = hasTips ? tips.slice(1, 3) : [];
+  const tipSource =
+    (typeof park?.tipSource === "string" && park.tipSource.trim()) ||
+    (typeof park?.source === "string" && park.source.trim()) ||
+    "";
 
 
   const highlights = [];
@@ -480,12 +560,25 @@ function FamilyToolkit({ park, tips, shareSuccess, onShare }) {
 
   return (
     <div className="rounded-2xl border border-pink-100 bg-[#fff7fb] p-4 flex flex-col gap-4">
-      <div className="space-y-2">
+      <div className="space-y-3">
         <ParkPhoto park={park} />
-        <ShareTipLink park={park} onShare={onShare} />
-        {shareSuccess && (
-          <div className="bg-white/90 border border-[#f06292]/40 text-[#c53d6f] text-xs rounded-lg px-3 py-2 shadow-sm">
-            Thanks! The form opened in a new tab—feel free to add a photo or tip.
+        <div className="flex flex-col sm:flex-row gap-2">
+          <ShareLinkButton
+            icon="📷"
+            label="Share a Photo"
+            href={buildPhotoFormUrl(park)}
+            onShare={() => onShare("Photo form opened in a new tab — thank you for sharing!")}
+          />
+          <ShareLinkButton
+            icon="💬"
+            label="Share a Tip"
+            href={buildTipFormUrl(park)}
+            onShare={() => onShare("Tip form opened in a new tab — thank you for helping other families!")}
+          />
+        </div>
+        {shareFeedback && (
+          <div className="bg-white/90 border border-[#6a00f4]/30 text-[#6a00f4] text-xs rounded-lg px-3 py-2 shadow-sm">
+            {shareFeedback}
           </div>
         )}
       </div>
@@ -510,15 +603,23 @@ function FamilyToolkit({ park, tips, shareSuccess, onShare }) {
           </ul>
         </div>
 
-        {highlightTip && (
+        {hasTips && (
           <div className="bg-white/80 border border-pink-100 rounded-lg p-3 text-xs text-[#0a2540] space-y-2">
-            <p className="font-semibold">Parent Tip</p>
-            <p>💬 {highlightTip}</p>
+            <p className="font-semibold">Parent Tips</p>
+            {highlightTip && <p>💬 {highlightTip}</p>}
             {extraTips.map((t, i) => (
               <p key={`${i}-${t.slice(0, 12)}`} className="text-[11px] text-[#0a2540]/80">
                 • {t}
               </p>
             ))}
+            {tipSource && (
+              <p className="text-[10px] text-[#6a5acd] italic">Shared by {tipSource}</p>
+            )}
+          </div>
+        )}
+        {!hasTips && (
+          <div className="bg-white/70 border border-dashed border-pink-200 rounded-lg p-3 text-[11px] text-[#0a2540]">
+            No parent tips yet — share one above to help other families.
           </div>
         )}
 
@@ -533,13 +634,13 @@ function FamilyToolkit({ park, tips, shareSuccess, onShare }) {
 }
 
 /* ---------- Reusable ---------- */
-function CButton({ icon, label, count, onClick, disabled }) {
+function CButton({ icon, label, count, onClick, disabled, title }) {
   return (
     <button
       onClick={onClick}
       disabled={disabled}
       className="flex items-center justify-between gap-2 bg-white/90 border border-yellow-200 rounded-md px-2 py-2 hover:bg-[#fff7cf] transition disabled:opacity-60 disabled:cursor-not-allowed"
-      title={label}
+      title={title || label}
     >
       <span className="flex items-center gap-2">
         <span className="text-base leading-none">{icon}</span>
@@ -552,9 +653,6 @@ function CButton({ icon, label, count, onClick, disabled }) {
   );
 }
 
-const PROXY_BASE =
-  "https://script.google.com/macros/s/AKfycbzaKleMyq37103scfD1SeRerz71mnWFQNu7SnAvRHFq8JDKaxmVq5NFxeA1kN6eVJKQ/exec";
-
 function ParkPhoto({ park }) {
   const [imgSrc, setImgSrc] = React.useState(null);
 
@@ -563,35 +661,46 @@ function ParkPhoto({ park }) {
     const override = typeof park?.photoOverride === "string" ? park.photoOverride.trim() : "";
     const normalized = typeof park?.imageUrl === "string" ? park.imageUrl.trim() : "";
     const rawValue = typeof park?.imageUrlRaw === "string" ? park.imageUrlRaw.trim() : "";
-    const candidate = override || normalized || rawValue;
+    const reference =
+      typeof park?.photoReference === "string"
+        ? park.photoReference.trim()
+        : "";
+
+    const candidate = override || normalized || rawValue || reference;
 
     if (!candidate) {
       setImgSrc("https://placehold.co/600x400?text=Playground+Photo+Coming+Soon&font=roboto");
       return;
     }
 
-    const ensureProxy = (url) => `${PROXY_BASE}?url=${encodeURIComponent(url)}`;
-    const isGooglePhoto = candidate.includes("maps.googleapis.com/maps/api/place/photo");
-    const isStreetView = candidate.includes("maps.googleapis.com/maps/api/streetview");
+    const buildPlacePhoto = (ref) =>
+      `https://maps.googleapis.com/maps/api/place/photo?maxwidth=800&photoreference=${ref}&key=${key}`;
 
-    let directUrl = "";
+    let resolved = "";
 
-    if (override) {
-      directUrl = ensureProxy(override);
-    } else if (isGooglePhoto || isStreetView) {
-      directUrl = candidate;
-    } else if (/^[A-Za-z0-9_-]{50,}$/.test(candidate) && key) {
-      directUrl = `https://maps.googleapis.com/maps/api/place/photo?maxwidth=800&photoreference=${candidate}&key=${key}`;
-    } else if (candidate.startsWith("http")) {
-      directUrl = ensureProxy(candidate);
+    if (override && override.startsWith("http")) {
+      resolved = override;
+    } else if (normalized && normalized.startsWith("http")) {
+      resolved = normalized;
+    } else if (rawValue && rawValue.startsWith("http")) {
+      resolved = rawValue;
+    } else if (reference && reference.length > 45 && key) {
+      resolved = buildPlacePhoto(reference);
     } else if (park.lat && park.lng && key) {
-      directUrl = `https://maps.googleapis.com/maps/api/streetview?size=600x400&location=${park.lat},${park.lng}&key=${key}`;
+      resolved = `https://maps.googleapis.com/maps/api/streetview?size=600x400&location=${park.lat},${park.lng}&key=${key}`;
     } else {
-      directUrl = "https://placehold.co/600x400?text=Playground+Photo+Coming+Soon&font=roboto";
+      resolved = "https://placehold.co/600x400?text=Playground+Photo+Coming+Soon&font=roboto";
     }
 
-    setImgSrc(directUrl);
-  }, [park?.photoOverride, park?.imageUrl, park?.imageUrlRaw, park?.lat, park?.lng]);
+    setImgSrc(resolved);
+  }, [
+    park?.photoOverride,
+    park?.imageUrl,
+    park?.imageUrlRaw,
+    park?.photoReference,
+    park?.lat,
+    park?.lng,
+  ]);
 
   return (
     <div className="flex flex-col gap-1">
@@ -613,29 +722,44 @@ function ParkPhoto({ park }) {
   );
 }
 
-const FORM_BASE_URL =
+const PHOTO_FORM_BASE_URL =
   "https://docs.google.com/forms/d/e/1FAIpQLSerLfBMbloLDgqR3ebZKkYGea-FMkuAqm3ljlWMZwqWUHesWw/viewform?usp=pp_url&";
-const FORM_PARAM_NAME = "entry.1153606241=";
-const FORM_PARAM_ID = "entry.624997259=";
+const PHOTO_FORM_PARAM_NAME = "entry.1153606241=";
+const PHOTO_FORM_PARAM_ID = "entry.624997259=";
 
-function ShareTipLink({ park, onShare }) {
-  if (!park?.name || !park?.id) return null;
-  const href = `${FORM_BASE_URL}${FORM_PARAM_NAME}${encodeURIComponent(
+// TODO: replace with your tip form prefill URL + params
+const TIP_FORM_BASE_URL =
+  "https://docs.google.com/forms/d/e/1FAIpQLSfh8aaPvGfmDY85OzxeBqrDXFPy46Td2mrSKEHjS1D9_Qtpbw/viewform?usp=pp_url&";
+const TIP_FORM_PARAM_NAME = "entry.781476267=";
+const TIP_FORM_PARAM_ID = "entry.980561211=";
+
+function buildPhotoFormUrl(park) {
+  if (!park?.name || !park?.id) return "#";
+  return `${PHOTO_FORM_BASE_URL}${PHOTO_FORM_PARAM_NAME}${encodeURIComponent(
     park.name
-  )}&${FORM_PARAM_ID}${encodeURIComponent(park.id)}`;
+  )}&${PHOTO_FORM_PARAM_ID}${encodeURIComponent(park.id)}`;
+}
+
+function buildTipFormUrl(park) {
+  if (!park?.name || !park?.id) return "#";
+  return `${TIP_FORM_BASE_URL}${TIP_FORM_PARAM_NAME}${encodeURIComponent(
+    park.name
+  )}&${TIP_FORM_PARAM_ID}${encodeURIComponent(park.id)}`;
+}
+
+function ShareLinkButton({ icon, label, href, onShare }) {
   return (
     <a
       href={href}
       target="_blank"
       rel="noopener noreferrer"
       onClick={() => onShare?.()}
-      className="inline-flex items-center gap-2 text-sm text-[#6a00f4] hover:text-[#45009d] font-semibold mb-2"
-      title="Share a photo or tip for this playground"
+      className="flex-1 inline-flex items-center justify-center gap-2 text-sm text-[#6a00f4] hover:text-[#45009d] font-semibold bg-white border border-[#6a00f4]/30 rounded-full px-3 py-2 shadow-sm transition"
     >
       <span role="img" aria-hidden="true">
-        📷
+        {icon}
       </span>
-      Share a photo or tip
+      {label}
     </a>
   );
 }

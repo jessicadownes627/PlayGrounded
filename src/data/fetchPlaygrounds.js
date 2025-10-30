@@ -10,23 +10,23 @@ export async function fetchPlaygrounds() {
   }
 
   try {
-    // ✅ Use a working CORS-safe proxy (Cloudflare mirror of AllOrigins)
-    const proxyUrl = `https://api.allorigins.workers.dev/get?url=${encodeURIComponent(url)}`;
-
     let json;
     try {
-      const proxyRes = await fetch(proxyUrl);
-      if (!proxyRes.ok) throw new Error(`Proxy fetch failed ${proxyRes.status}`);
-
-      const proxyJson = await proxyRes.json();
-      json = JSON.parse(proxyJson.contents);
-    } catch (err) {
-      console.warn("⚠️ Proxy failed, falling back to direct fetch:", err);
-      const res = await fetch(`https://corsproxy.io/?${encodeURIComponent(url)}`, {
-        cache: "no-store",
-      });
-
-      json = await res.json();
+      const direct = await fetch(url, { cache: "no-store" });
+      if (!direct.ok) {
+        throw new Error(`Direct fetch failed ${direct.status}`);
+      }
+      json = await direct.json();
+    } catch (directErr) {
+      console.warn("⚠️ Direct fetch failed, using proxy:", directErr);
+      const proxyRes = await fetch(
+        `https://corsproxy.io/?${encodeURIComponent(url)}`,
+        { cache: "no-store" }
+      );
+      if (!proxyRes.ok) {
+        throw new Error(`Proxy fetch failed ${proxyRes.status}`);
+      }
+      json = await proxyRes.json();
     }
 
     console.log("🧠 Raw JSON from Apps Script:", json);
@@ -84,6 +84,8 @@ export async function fetchPlaygrounds() {
           p.photo_reference ||
           p.photoRef ||
           p.placePhotoRef;
+        const photoReference =
+          typeof photoRefCandidate === "string" ? photoRefCandidate.trim() : "";
 
         let imageUrl = "";
         let imageUrlRaw = cleanedLink;
@@ -109,6 +111,17 @@ export async function fetchPlaygrounds() {
           imageUrl = cleanedLink;
           imageUrlRaw = cleanedLink;
         }
+
+        const tipText =
+          (typeof p.tipText === "string" && p.tipText) ||
+          (typeof p.tip_text === "string" && p.tip_text) ||
+          (typeof p.parentTip === "string" && p.parentTip) ||
+          "";
+        const tipSource =
+          (typeof p.tipSource === "string" && p.tipSource) ||
+          (typeof p.tip_source === "string" && p.tip_source) ||
+          (typeof p.source === "string" && p.source) ||
+          "";
 
         return {
           id: String(p.id ?? `${lat},${lng}`),
@@ -142,12 +155,15 @@ export async function fetchPlaygrounds() {
           photoCredit:
             typeof p.photoCredit === "string"
               ? p.photoCredit.trim()
-              : typeof p.photo_credit === "string"
-              ? p.photo_credit.trim()
-              : "",
+            : typeof p.photo_credit === "string"
+            ? p.photo_credit.trim()
+            : "",
           imageUrlRaw,
           // 👇 here's the fix
           imageUrl,
+          photoReference,
+          tipText,
+          tipSource,
         };
       })
       .filter(Boolean);
