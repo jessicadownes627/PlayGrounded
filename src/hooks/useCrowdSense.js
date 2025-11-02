@@ -2,6 +2,7 @@
 import { useEffect, useMemo, useState } from "react";
 
 const SCRIPT_URL =
+  import.meta.env.VITE_SHEET_JSON_URL ||
   "https://script.google.com/macros/s/AKfycbwfk-5FhIJxcowwUCMAd27KIVKTCct-9Hx-ym4Io3H_3STz6E3QgQrDKtkAxu9bo8vS/exec";
 
 const POLL_INTERVAL_MS = 30_000;

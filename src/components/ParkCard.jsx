@@ -2,6 +2,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useUser } from "../context/UserContext.jsx";
 import { useCrowdSense } from "../hooks/useCrowdSense.js";
+import { fetchWeatherBundle } from "../utils/fetchWeatherBundle.js";
 
 export default function ParkCard({ park, isSelected }) {
   const { filters } = useUser();
@@ -49,6 +50,46 @@ export default function ParkCard({ park, isSelected }) {
     loadWeather();
     const id = setInterval(loadWeather, 180000);
     return () => clearInterval(id);
+  }, [park?.lat, park?.lng]);
+
+  const [environmentBundle, setEnvironmentBundle] = useState(null);
+  const [environmentStatus, setEnvironmentStatus] = useState("idle");
+
+  useEffect(() => {
+    const latNum = Number(park?.lat);
+    const lonNum = Number(park?.lng);
+    if (!Number.isFinite(latNum) || !Number.isFinite(lonNum)) {
+      setEnvironmentStatus("idle");
+      setEnvironmentBundle(null);
+      return;
+    }
+
+    let cancelled = false;
+
+    const loadEnvironment = async () => {
+      try {
+        setEnvironmentStatus((prev) => (prev === "ready" ? prev : "loading"));
+        const bundle = await fetchWeatherBundle(latNum, lonNum);
+        if (!cancelled) {
+          setEnvironmentBundle(bundle);
+          setEnvironmentStatus("ready");
+        }
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.error("environment", err);
+        if (!cancelled) {
+          setEnvironmentBundle(null);
+          setEnvironmentStatus("error");
+        }
+      }
+    };
+
+    loadEnvironment();
+    const timer = setInterval(loadEnvironment, 15 * 60 * 1000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
   }, [park?.lat, park?.lng]);
 
   /* ---------- Crowd / Vibe ---------- */
@@ -217,6 +258,8 @@ export default function ParkCard({ park, isSelected }) {
       ) : (
         <OutdoorLiveLook
           weather={weather}
+          environment={environmentBundle}
+          environmentStatus={environmentStatus}
           counts={counts}
           vote={vote}
           status={crowdStatus}
@@ -337,11 +380,74 @@ const renderStatusLabel = (status) => {
   }
 };
 
+const AQI_BANDS = [
+  { max: 50, label: "Good" },
+  { max: 100, label: "Moderate" },
+  { max: 150, label: "Unhealthy (Sensitive)" },
+  { max: 200, label: "Unhealthy" },
+  { max: 300, label: "Very Unhealthy" },
+  { max: Infinity, label: "Hazardous" },
+];
+
+const POLLEN_BANDS = [
+  { max: 2, label: "Low" },
+  { max: 4, label: "Moderate" },
+  { max: 6, label: "High" },
+  { max: Infinity, label: "Very High" },
+];
+
+function EnvMetric({ emoji, label, value }) {
+  return (
+    <div className="flex flex-col bg-white/80 rounded-lg border border-sky-100 px-2 py-2">
+      <span className="text-[11px] font-semibold flex items-center gap-1">
+        <span>{emoji}</span>
+        <span>{label}</span>
+      </span>
+      <span className="text-[11px] text-[#0a2540] mt-1">{value ?? "—"}</span>
+    </div>
+  );
+}
+
+function formatTime(isoString) {
+  if (!isoString) return "—";
+  const date = new Date(isoString);
+  if (Number.isNaN(date.getTime())) return "—";
+  return date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+}
+
+function describeAqi(value) {
+  if (value == null) return "—";
+  const band = AQI_BANDS.find((entry) => value <= entry.max) ?? AQI_BANDS[AQI_BANDS.length - 1];
+  return `${value} • ${band.label}`;
+}
+
+function describePollen(value) {
+  if (value == null) return "—";
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return `${value} • Unknown`;
+  const band =
+    POLLEN_BANDS.find((entry) => numeric <= entry.max) ?? POLLEN_BANDS[POLLEN_BANDS.length - 1];
+  return `${numeric.toFixed(1)} • ${band.label}`;
+}
+
 /* ---------- Live Look (Outdoor) ---------- */
-function OutdoorLiveLook({ weather, counts, vote, status, updating, record }) {
+function OutdoorLiveLook({
+  weather,
+  environment,
+  environmentStatus,
+  counts,
+  vote,
+  status,
+  updating,
+  record,
+}) {
   const summary = buildCrowdSummary(counts, record);
   const totalReports = tallyReports(counts);
   const statusLabel = renderStatusLabel(updating ? "updating" : status);
+  const envCurrent = environment?.current ?? null;
+  const envReady = environmentStatus === "ready" && envCurrent;
+  const envLoading = environmentStatus === "loading";
+  const envError = environmentStatus === "error";
 
   return (
     <div className="rounded-2xl border border-yellow-100 bg-[#fffdf3] p-4 flex flex-col gap-3">
@@ -362,6 +468,52 @@ function OutdoorLiveLook({ weather, counts, vote, status, updating, record }) {
           <p className="text-[11px] text-gray-500 italic">Weather loading…</p>
         )}
       </div>
+
+      {environmentStatus !== "idle" && (
+        <div className="rounded-xl px-3 py-3 bg-[#e8f7ff] border border-sky-100 shadow-inner text-[11px] text-[#064b66]">
+          <p className="font-semibold text-xs mb-2 flex items-center gap-2">
+            <span>🌤</span>
+            <span>Environment snapshot</span>
+          </p>
+          {envLoading && <p>Checking air quality and pollen…</p>}
+          {envError && (
+            <p>Couldn&apos;t reach the weather service right now. Try again soon.</p>
+          )}
+          {envReady && (
+            <div className="grid grid-cols-2 gap-2">
+              <EnvMetric
+                label="Sunrise"
+                value={formatTime(envCurrent.sunrise)}
+                emoji="🌅"
+              />
+              <EnvMetric
+                label="Sunset"
+                value={formatTime(envCurrent.sunset)}
+                emoji="🌙"
+              />
+              <EnvMetric
+                label="Rain chance"
+                value={
+                  envCurrent.precipitationProbability != null
+                    ? `${Math.round(envCurrent.precipitationProbability)}%`
+                    : "—"
+                }
+                emoji="🌧️"
+              />
+              <EnvMetric
+                label="Air quality"
+                value={describeAqi(envCurrent.airQuality?.usAqi)}
+                emoji="😮‍💨"
+              />
+              <EnvMetric
+                label="Pollen"
+                value={describePollen(envCurrent.pollen?.average)}
+                emoji="🌸"
+              />
+            </div>
+          )}
+        </div>
+      )}
 
       <div
         className={`rounded-xl px-3 py-3 bg-white/90 border ${
@@ -662,22 +814,12 @@ function ParkPhoto({ park }) {
     const normalized = typeof park?.imageUrl === "string" ? park.imageUrl.trim() : "";
     const rawValue = typeof park?.imageUrlRaw === "string" ? park.imageUrlRaw.trim() : "";
     const reference =
-      typeof park?.photoReference === "string"
-        ? park.photoReference.trim()
-        : "";
-
-    const candidate = override || normalized || rawValue || reference;
-
-    if (!candidate) {
-      setImgSrc("https://placehold.co/600x400?text=Playground+Photo+Coming+Soon&font=roboto");
-      return;
-    }
+      typeof park?.photoReference === "string" ? park.photoReference.trim() : "";
 
     const buildPlacePhoto = (ref) =>
       `https://maps.googleapis.com/maps/api/place/photo?maxwidth=800&photoreference=${ref}&key=${key}`;
 
     let resolved = "";
-
     if (override && override.startsWith("http")) {
       resolved = override;
     } else if (normalized && normalized.startsWith("http")) {
@@ -686,32 +828,40 @@ function ParkPhoto({ park }) {
       resolved = rawValue;
     } else if (reference && reference.length > 45 && key) {
       resolved = buildPlacePhoto(reference);
-    } else if (park.lat && park.lng && key) {
-      resolved = `https://maps.googleapis.com/maps/api/streetview?size=600x400&location=${park.lat},${park.lng}&key=${key}`;
-    } else {
-      resolved = "https://placehold.co/600x400?text=Playground+Photo+Coming+Soon&font=roboto";
     }
 
-    setImgSrc(resolved);
-  }, [
-    park?.photoOverride,
-    park?.imageUrl,
-    park?.imageUrlRaw,
-    park?.photoReference,
-    park?.lat,
-    park?.lng,
-  ]);
+    setImgSrc(resolved || null);
+  }, [park?.photoOverride, park?.imageUrl, park?.imageUrlRaw, park?.photoReference]);
+
+  const hasPhoto = Boolean(imgSrc);
+  const locationLabel =
+    park?.city || park?.state
+      ? [park.city, park.state].filter(Boolean).join(", ")
+      : "PlayGrounded";
 
   return (
-    <div className="flex flex-col gap-1">
-      <img
-        src={imgSrc}
-        alt={park?.name || "Playground Photo"}
-        className="rounded-lg w-full h-28 object-cover"
-        onError={() =>
-          setImgSrc("https://placehold.co/600x400?text=Playground+Photo+Coming+Soon&font=roboto")
-        }
-      />
+    <div className="flex flex-col gap-2">
+      {hasPhoto ? (
+        <div className="relative">
+          <img
+            src={imgSrc}
+            alt={park?.name || "Playground Photo"}
+            className="rounded-lg w-full h-28 object-cover border border-white shadow-sm"
+            onError={() => setImgSrc(null)}
+          />
+          <span className="absolute top-2 left-2 text-[10px] uppercase tracking-wide bg-black/55 text-white px-2 py-1 rounded-full">
+            {locationLabel}
+          </span>
+        </div>
+      ) : (
+        <div className="rounded-xl h-28 border border-dashed border-[#1fb6ff]/40 bg-gradient-to-br from-[#c3f1ff] via-[#a6e9ff] to-[#d7fff6] flex flex-col justify-center px-4 py-3 shadow-inner">
+          <p className="text-sm font-semibold text-[#045472]">📸 Photo coming soon!</p>
+          <p className="text-[11px] text-[#045472]/75 leading-relaxed mt-1">
+            Be the first to share a snap of {park?.name || "this playground"} and help families plan
+            their playday.
+          </p>
+        </div>
+      )}
       {park?.photoCredit && (
         <p className="text-[10px] text-gray-500 italic flex items-center gap-1">
           <span>📸</span>

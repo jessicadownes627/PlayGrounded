@@ -23,9 +23,11 @@ export default function MapPage() {
   const [showAll, setShowAll] = useState(false);
   const [radiusMiles, setRadiusMiles] = useState(fallbackRadius);
   const [amenityFilters, setAmenityFilters] = useState([]);
-  const [zoom, setZoom] = useState(12);
+  const [zoom, setZoom] = useState(10);
   const [searchQuery, setSearchQuery] = useState("");
   const mapRef = useRef(null);
+  const mapContainerRef = useRef(null);
+  const lastFitRef = useRef({ lat: null, lng: null, radius: null });
   const location = useLocation();
 
   const activeFilters = location.state?.filters || [];
@@ -66,7 +68,7 @@ export default function MapPage() {
           lng: pos.coords.longitude,
         };
         setCenter(nextCenter);
-        const closerZoom = 13;
+        const closerZoom = 11;
         setZoom((prev) => Math.max(prev, closerZoom));
         if (mapRef.current) {
           mapRef.current.panTo(nextCenter);
@@ -77,6 +79,42 @@ export default function MapPage() {
       { enableHighAccuracy: true, timeout: 5000 }
     );
   }, []);
+
+  /* ---------- Fit Radius Ring ---------- */
+  useEffect(() => {
+    if (!isLoaded || !mapRef.current) return;
+    if (!Number.isFinite(center.lat) || !Number.isFinite(center.lng)) return;
+
+    const radius = Math.max(radiusMiles, 0.5);
+    const last = lastFitRef.current;
+    if (
+      last.lat === center.lat &&
+      last.lng === center.lng &&
+      Math.abs((last.radius ?? 0) - radius) < 0.01
+    ) {
+      return;
+    }
+
+    const lat = center.lat;
+    const lng = center.lng;
+    const milesPerDegreeLat = 69.0;
+    const milesPerDegreeLng = Math.cos((lat * Math.PI) / 180) * 69.172;
+    const latDelta = radius / milesPerDegreeLat;
+    const lngDelta = radius / (Math.abs(milesPerDegreeLng) < 0.0001 ? milesPerDegreeLat : milesPerDegreeLng);
+
+    const bounds = new window.google.maps.LatLngBounds(
+      { lat: lat - latDelta, lng: lng - lngDelta },
+      { lat: lat + latDelta, lng: lng + lngDelta }
+    );
+
+    const map = mapRef.current;
+    map.fitBounds(bounds);
+
+    const currentZoom = map.getZoom();
+    if (currentZoom > 14) map.setZoom(14);
+
+    lastFitRef.current = { lat, lng, radius };
+  }, [center.lat, center.lng, radiusMiles, isLoaded]);
 
   /* ---------- Distance Helper ---------- */
   const distanceMiles = (a, b) => haversine(a, b) / 1609.34;
@@ -149,9 +187,29 @@ export default function MapPage() {
     return `park-${cleaned || "unknown"}`;
   };
 
+  const focusMapOnPark = (park, { scrollMap = false } = {}) => {
+    setSelectedPark(park);
+    const map = mapRef.current;
+    const lat = Number(park?.lat);
+    const lng = Number(park?.lng);
+
+    if (map && Number.isFinite(lat) && Number.isFinite(lng)) {
+      const target = { lat, lng };
+      map.panTo(target);
+      const currentZoom = map.getZoom();
+      if (typeof currentZoom === "number" && currentZoom < 13) {
+        map.setZoom(13);
+      }
+    }
+
+    if (scrollMap && mapContainerRef.current) {
+      mapContainerRef.current.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+  };
+
   /* ---------- Marker Click ---------- */
   const handleMarkerClick = (park) => {
-    setSelectedPark(park);
+    focusMapOnPark(park);
     const targetId = getParkDomId(park);
     const isAlreadyVisible =
       showAll ||
@@ -169,6 +227,11 @@ export default function MapPage() {
         if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
       }, 250);
     }
+
+  };
+
+  const handleCardClick = (park) => {
+    focusMapOnPark(park, { scrollMap: true });
   };
 
   /* ---------- Marker Style ---------- */
@@ -305,8 +368,8 @@ export default function MapPage() {
         <h1 className="text-3xl font-extrabold tracking-tight">PlayGrounded</h1>
         <p className="text-sm opacity-80">
           {playMode === "indoor"
-            ? "Showing indoor play spaces nearby!"
-            : "Showing outdoor playgrounds nearby!"}
+            ? "Hey! Showing indoor play spaces nearby!"
+            : "Hey! Showing outdoor playgrounds nearby!"}
         </p>
         {activeFilters.length > 0 && (
           <p className="text-xs mt-2 opacity-70">
@@ -338,7 +401,10 @@ export default function MapPage() {
 
       <section className="flex flex-col gap-4 mt-4 px-4 md:px-6 lg:flex-row lg:items-stretch lg:justify-center">
         <div className="flex-1 flex justify-center">
-          <div className="relative w-full max-w-3xl aspect-square rounded-3xl overflow-hidden bg-white/90 backdrop-blur-md shadow-[0_10px_35px_rgba(0,0,0,0.15)] border border-white/50">
+          <div
+            ref={mapContainerRef}
+            className="relative w-full max-w-3xl aspect-square rounded-3xl overflow-hidden bg-white/90 backdrop-blur-md shadow-[0_10px_35px_rgba(0,0,0,0.15)] border border-white/50"
+          >
             {isLoaded ? (
               <GoogleMap
                 mapContainerStyle={{ width: "100%", height: "100%" }}
@@ -599,7 +665,7 @@ export default function MapPage() {
             Tap a card to highlight it on the map, or use Live Look to see crowd updates in real time.
           </p>
         </div>
-        <div className="grid gap-6">
+        <div className="flex flex-col gap-8">
           {visibleParks.map((p, idx) => {
             const domId = getParkDomId(p);
             const cardKey = p.id ? `${p.id}-${idx}` : domId || idx;
@@ -607,11 +673,11 @@ export default function MapPage() {
               <div
                 key={cardKey}
                 id={domId}
-                onClick={() => handleMarkerClick(p)}
+                onClick={() => handleCardClick(p)}
                 onKeyDown={(e) => {
                   if (e.key === "Enter" || e.key === " ") {
                     e.preventDefault();
-                    handleMarkerClick(p);
+                    handleCardClick(p);
                   }
                 }}
                 role="button"

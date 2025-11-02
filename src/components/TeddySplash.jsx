@@ -45,9 +45,10 @@ export default function TeddySplash() {
         initial={{ opacity: 0, scale: 0.7 }}
         animate={{ opacity: 1, scale: 1 }}
         transition={{ duration: 1.2, ease: "easeOut" }}
-        className="text-4xl md:text-6xl font-bold tracking-tight mb-3"
+        className="text-4xl md:text-6xl font-bold tracking-tight mb-3 flex flex-col items-center"
       >
-        <span className="text-[#f06292]">Hey!</span> PlayGrounded
+        <span className="text-[#f06292] text-5xl md:text-7xl drop-shadow-lg">Hey!</span>
+        <span>PlayGrounded</span>
       </motion.h1>
 
       {/* 💬 Tagline */}
