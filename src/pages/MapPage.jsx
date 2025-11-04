@@ -1,5 +1,5 @@
 // src/pages/MapPage.jsx
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   GoogleMap,
   OverlayView,
@@ -18,6 +18,7 @@ export default function MapPage() {
   const [parks, setParks] = useState([]);
   const [selectedPark, setSelectedPark] = useState(null);
   const [center, setCenter] = useState(defaultCenter);
+  const [mapAlertTone, setMapAlertTone] = useState(null);
   const defaultRadiusSetting = Number(import.meta.env.VITE_DEFAULT_RADIUS_MILES);
   const fallbackRadius = Number.isFinite(defaultRadiusSetting) && defaultRadiusSetting > 0 ? defaultRadiusSetting : 25;
   const [showAll, setShowAll] = useState(false);
@@ -25,6 +26,7 @@ export default function MapPage() {
   const [amenityFilters, setAmenityFilters] = useState([]);
   const [zoom, setZoom] = useState(10);
   const [searchQuery, setSearchQuery] = useState("");
+  const [parkAlerts, setParkAlerts] = useState({});
   const mapRef = useRef(null);
   const mapContainerRef = useRef(null);
   const lastFitRef = useRef({ lat: null, lng: null, radius: null });
@@ -228,11 +230,34 @@ export default function MapPage() {
       }, 250);
     }
 
+    setSelectedPark(park);
+    const alert = parkAlerts[park?.id];
+    setMapAlertTone(alert?.hasConcerns ? "concern" : null);
+  };
+  const handleLiveSignalsUpdate = useCallback((parkId, updates = {}) => {
+    if (!parkId) return;
+    setParkAlerts((prev) => {
+      const prevMeta = prev[parkId] || {};
+      const nextMeta = { ...prevMeta, ...updates };
+      if (prevMeta.hasConcerns === nextMeta.hasConcerns) return prev;
+      return { ...prev, [parkId]: nextMeta };
+    });
+  }, []);
+
+  const handleCardSelect = (park, meta = {}) => {
+    if (!park) return;
+    setSelectedPark(park);
+    focusMapOnPark(park, { scrollMap: true });
+    const hasConcerns =
+      meta?.hasConcerns ?? parkAlerts[park?.id]?.hasConcerns ?? false;
+    setMapAlertTone(hasConcerns ? "concern" : null);
   };
 
-  const handleCardClick = (park) => {
-    focusMapOnPark(park, { scrollMap: true });
-  };
+  useEffect(() => {
+    if (!selectedPark?.id) return;
+    const alert = parkAlerts[selectedPark.id];
+    setMapAlertTone(alert?.hasConcerns ? "concern" : null);
+  }, [selectedPark, parkAlerts]);
 
   /* ---------- Marker Style ---------- */
   const getMarkerWrapperStyle = (park, { dimmed = false } = {}) => {
@@ -403,7 +428,11 @@ export default function MapPage() {
         <div className="flex-1 flex justify-center">
           <div
             ref={mapContainerRef}
-            className="relative w-full max-w-3xl aspect-square rounded-3xl overflow-hidden bg-white/90 backdrop-blur-md shadow-[0_10px_35px_rgba(0,0,0,0.15)] border border-white/50"
+            className={`relative w-full max-w-3xl aspect-square rounded-3xl overflow-hidden bg-white/90 backdrop-blur-md shadow-[0_10px_35px_rgba(0,0,0,0.15)] transition-shadow duration-300 ${
+              mapAlertTone === "concern"
+                ? "border-2 border-[#f472b6] ring-4 ring-[#ec4899]/60 ring-offset-4 ring-offset-white shadow-[0_0_28px_rgba(236,72,153,0.35)]"
+                : "border border-white/50"
+            }`}
           >
             {isLoaded ? (
               <GoogleMap
@@ -665,29 +694,19 @@ export default function MapPage() {
             Tap a card to highlight it on the map, or use Live Look to see crowd updates in real time.
           </p>
         </div>
-        <div className="flex flex-col gap-8">
+        <div className="flex flex-col gap-10">
           {visibleParks.map((p, idx) => {
             const domId = getParkDomId(p);
             const cardKey = p.id ? `${p.id}-${idx}` : domId || idx;
             return (
-              <div
+              <ParkCard
                 key={cardKey}
-                id={domId}
-                onClick={() => handleCardClick(p)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" || e.key === " ") {
-                    e.preventDefault();
-                    handleCardClick(p);
-                  }
-                }}
-                role="button"
-                tabIndex={0}
-                className={`cursor-pointer focus:outline-none focus:ring-2 focus:ring-[#6a00f4] rounded-3xl ${
-                  selectedPark?.id === p.id ? "ring-2 ring-pink-300" : ""
-                }`}
-              >
-                <ParkCard park={p} isSelected={selectedPark?.id === p.id} />
-              </div>
+                park={p}
+                domId={domId}
+                isSelected={selectedPark?.id === p.id}
+                onSelect={handleCardSelect}
+                onLiveSignalsUpdate={handleLiveSignalsUpdate}
+              />
             );
           })}
         </div>

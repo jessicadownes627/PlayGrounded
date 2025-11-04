@@ -1,10 +1,38 @@
 // src/components/ParkCard.jsx
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useUser } from "../context/UserContext.jsx";
-import { useCrowdSense } from "../hooks/useCrowdSense.js";
+import { useCrowdSense, CROWD_SENSE_URL } from "../hooks/useCrowdSense.js";
+import LiveReportSection from "./LiveReportSection.jsx";
 import { fetchWeatherBundle } from "../utils/fetchWeatherBundle.js";
 
-export default function ParkCard({ park, isSelected }) {
+const AMENITY_LABELS = {
+  fenced: "Fenced play area",
+  dogs: "Dog friendly",
+  dogsAllowed: "Dog friendly",
+  bathrooms: "Bathrooms",
+  shade: "Shaded seating",
+  parking: "Parking",
+  lighting: "Evening lighting",
+  adaptiveEquipment: "Inclusive play gear",
+  indoorPlayArea: "Indoor play",
+};
+
+const DEFAULT_SECTION_STYLE =
+  "rounded-2xl border bg-white/95 shadow-[0_10px_24px_rgba(15,23,42,0.08)]";
+
+const WEATHER_CODE_MAP = [
+  { icon: "☀️", label: "Sunny", codes: [0] },
+  { icon: "🌤️", label: "Mostly sunny", codes: [1] },
+  { icon: "⛅", label: "Partly cloudy", codes: [2] },
+  { icon: "☁️", label: "Cloudy", codes: [3] },
+  { icon: "🌫️", label: "Foggy", codes: [45, 48] },
+  { icon: "🌦️", label: "Light rain", codes: [51, 53, 55, 61, 63, 80, 81] },
+  { icon: "🌧️", label: "Rainy", codes: [65, 66, 67, 82] },
+  { icon: "❄️", label: "Snowy", codes: [71, 73, 75, 77] },
+  { icon: "⛈️", label: "Stormy", codes: [95, 96, 99] },
+];
+
+export default function ParkCard({ park, isSelected, onSelect, onLiveSignalsUpdate, domId }) {
   const { filters } = useUser();
   const [shareFeedback, setShareFeedback] = useState("");
 
@@ -31,6 +59,14 @@ export default function ParkCard({ park, isSelected }) {
     });
     return unique.slice(0, 3);
   }, [park?.tipText, park?.parentTip]);
+
+  const distanceText = useMemo(() => {
+    const miles = Number(park?.distance);
+    if (!Number.isFinite(miles)) return null;
+    if (miles < 0.1) return "< 0.1 mi away";
+    const rounded = miles >= 10 ? Math.round(miles) : parseFloat(miles.toFixed(1));
+    return `${rounded} mi away`;
+  }, [park?.distance]);
 
   /* ---------- Weather ---------- */
   const [weather, setWeather] = useState(null);
@@ -113,22 +149,52 @@ export default function ParkCard({ park, isSelected }) {
     [filters]
   );
 
-  const parkFeatureMap = {
-    fenced: !!park?.fenced,
-    dogs: !!park?.dogsAllowed,
-    bathrooms: !!park?.bathrooms,
-    shade: !!park?.shade,
-    parking: !!park?.parking,
-    lighting: !!park?.lighting,
-    adaptiveEquipment: !!park?.adaptiveEquipment,
-    indoorPlayArea: !!park?.indoorPlayArea,
-  };
+  const parkFeatureMap = useMemo(
+    () => ({
+      fenced: !!park?.fenced,
+      dogs: !!park?.dogsAllowed,
+      bathrooms: !!park?.bathrooms,
+      shade: !!park?.shade,
+      parking: !!park?.parking,
+      lighting: !!park?.lighting,
+      adaptiveEquipment: !!park?.adaptiveEquipment,
+      indoorPlayArea: !!park?.indoorPlayArea,
+    }),
+    [
+      park?.fenced,
+      park?.dogsAllowed,
+      park?.bathrooms,
+      park?.shade,
+      park?.parking,
+      park?.lighting,
+      park?.adaptiveEquipment,
+      park?.indoorPlayArea,
+    ]
+  );
 
-  const amenities = Object.entries(parkFeatureMap)
-    .filter(([, v]) => v)
-    .map(([k]) => k);
+  const amenities = useMemo(
+    () =>
+      Object.entries(parkFeatureMap)
+        .filter(([, v]) => v)
+        .map(([k]) => k),
+    [parkFeatureMap]
+  );
 
-  const needs = selected.filter((k) => !amenities.includes(k));
+  const topMatches = useMemo(
+    () => selected.filter((key) => amenities.includes(key)),
+    [amenities, selected]
+  );
+
+  const extraAmenities = useMemo(
+    () => amenities.filter((key) => !topMatches.includes(key)),
+    [amenities, topMatches]
+  );
+
+  const needs = useMemo(
+    () => selected.filter((key) => !amenities.includes(key)),
+    [amenities, selected]
+  );
+
   const matchScore =
     selected.length === 0
       ? 100
@@ -149,49 +215,134 @@ export default function ParkCard({ park, isSelected }) {
 
   const description = (park.description || park.notes || "").trim();
 
-  /* ---------- Render ---------- */
+/* ---------- Render ---------- */
+  const concernCount = Number(counts?.concerns) || 0;
+  const hasConcernReports = concernCount > 0;
+
+  useEffect(() => {
+    if (!onLiveSignalsUpdate || !park?.id) return;
+    onLiveSignalsUpdate(park.id, { hasConcerns: hasConcernReports });
+  }, [onLiveSignalsUpdate, park?.id, hasConcernReports]);
+
+  const handleCardActivate = useCallback(() => {
+    onSelect?.(park, { hasConcerns: hasConcernReports });
+  }, [onSelect, park, hasConcernReports]);
+
+  const handleSurfaceClick = useCallback(
+    (event) => {
+      const interactive = event.target.closest("a, button");
+      if (interactive) return;
+      handleCardActivate();
+    },
+    [handleCardActivate]
+  );
+
+  const handleSurfaceKeyDown = useCallback(
+    (event) => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        handleCardActivate();
+      }
+    },
+    [handleCardActivate]
+  );
+
   return (
-    <div
-      className={`grid grid-cols-1 md:grid-cols-3 gap-6 p-6 rounded-3xl backdrop-blur-md border transition-all duration-200 ease-out ${
+    <article
+      id={domId}
+      role="button"
+      tabIndex={0}
+      aria-pressed={isSelected}
+      onClick={handleSurfaceClick}
+      onKeyDown={handleSurfaceKeyDown}
+      className={`grid grid-cols-1 gap-5 md:grid-cols-12 md:gap-4 md:auto-rows-auto p-5 md:p-6 rounded-3xl backdrop-blur-md border-2 border-black transition-all duration-200 ease-out cursor-pointer focus:outline-none focus:ring-2 focus:ring-[#6a00f4] ${
         isSelected
-          ? "bg-white shadow-[0_20px_45px_rgba(106,0,244,0.25)] ring-2 ring-[#6a00f4] scale-[1.01] border-black/30"
-          : "bg-white/95 shadow-[0_8px_25px_rgba(0,0,0,0.06)] hover:shadow-[0_12px_30px_rgba(0,0,0,0.12)] border-black/15"
+          ? "bg-white shadow-[0_22px_55px_rgba(106,0,244,0.2)] ring-2 ring-[#6a00f4] scale-[1.01]"
+          : "bg-white shadow-[0_14px_30px_rgba(15,23,42,0.08)] hover:shadow-[0_18px_36px_rgba(14,52,91,0.12)]"
       }`}
     >
-      {/* LEFT — Smart Info */}
-      <div className="rounded-2xl border border-[#e7f0fb] bg-[#f6fbff] p-4">
-        <h2 className="text-lg font-extrabold text-[#0a2540] mb-1">
-          {park.name}
-        </h2>
+      <section
+        className={`${DEFAULT_SECTION_STYLE} border-[#e7f0fb] bg-[#f6fbff] p-4 flex flex-col gap-4 order-1 md:order-none md:col-span-7 md:row-start-1`}
+      >
+        <div className="space-y-2">
+          <h2 className="text-xl font-extrabold text-[#0a2540] leading-tight">
+            {park.name}
+          </h2>
+          <div className="space-y-1">
+            <a
+              href={googleLink}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1 text-[#0a6cff] underline underline-offset-2 font-semibold text-sm"
+            >
+              <span role="img" aria-hidden="true">
+                📍
+              </span>
+              <span>{park.address || park.name}</span>
+            </a>
+            {park.city && (
+              <p className="text-xs text-gray-600">
+                {park.city}
+                {park.state ? `, ${park.state}` : ""}
+              </p>
+            )}
+            {distanceText && (
+              <p className="text-xs font-semibold text-[#045472] flex items-center gap-1">
+                <span role="img" aria-hidden="true">
+                  📏
+                </span>
+                <span>{distanceText}</span>
+              </p>
+            )}
+            <p className="text-[10px] text-[#6a00f4]/80">
+              Tap this card to spotlight it on the map.
+            </p>
+          </div>
+        </div>
 
-        <a
-          href={googleLink}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="inline-block text-[#0a6cff] underline underline-offset-2 font-semibold text-sm mb-1"
-        >
-          📍 {park.address || park.name}
-        </a>
-        {park.city && <p className="text-xs text-gray-600 mb-1">{park.city}</p>}
+        {description && (
+          <p className="italic text-sm text-[#0e3325] leading-relaxed">{description}</p>
+        )}
 
-        {/* contact + hours + socials */}
-        {park.hours && (
-          <p className="text-xs text-gray-700 mb-1">🕒 {park.hours}</p>
-        )}
-        {park.contact && (
-          <p className="text-xs text-gray-700 mb-1">📞 {park.contact}</p>
-        )}
-        {park.website && (
-          <a
-            href={park.website}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-xs text-[#0a6cff] underline underline-offset-2 block mb-1"
-          >
-            🌐 Website
-          </a>
-        )}
-        <div className="flex flex-wrap gap-2 mb-2">
+        <ParkPhoto
+          park={park}
+          onShare={() =>
+            setShareFeedback(
+              "Photo form opened in a new tab — thank you for sharing!"
+            )
+          }
+        />
+
+        <div className="flex flex-wrap gap-2">
+          {park.hours && (
+            <span className="inline-flex items-center gap-1 rounded-full bg-white/80 px-2 py-1 text-[11px] text-[#0a2540] border border-[#cee5ff]">
+              <span role="img" aria-hidden="true">
+                🕒
+              </span>
+              {park.hours}
+            </span>
+          )}
+          {park.contact && (
+            <span className="inline-flex items-center gap-1 rounded-full bg-white/80 px-2 py-1 text-[11px] text-[#0a2540] border border-[#cee5ff]">
+              <span role="img" aria-hidden="true">
+                📞
+              </span>
+              {park.contact}
+            </span>
+          )}
+        </div>
+
+        <div className="flex flex-wrap gap-2">
+          {park.website && (
+            <a
+              href={park.website}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="px-2 py-1 rounded-full bg-white/80 border border-[#cee5ff] text-[11px] font-semibold text-[#0a6cff] hover:bg-[#e0f2ff] transition"
+            >
+              Website ↗
+            </a>
+          )}
           {park.instagram && (
             <a
               href={park.instagram}
@@ -213,69 +364,81 @@ export default function ParkCard({ park, isSelected }) {
             </a>
           )}
         </div>
+      </section>
 
-        <p className="text-[10px] text-[#6a00f4]/80 mb-2">
-          Tap this card to spotlight it on the map.
-        </p>
-
-        {description && (
-          <p className="italic text-sm text-[#0e3325] mb-2">{description}</p>
-        )}
-
-        <Section title="Your Selected Features">
-          <BadgeRow items={selected} empty="No preferences set" color="green" />
+      <section
+        className={`${DEFAULT_SECTION_STYLE} border-[#eae8ff] bg-[#f6f5ff] p-4 order-3 md:order-none md:col-span-7 md:row-start-2`}
+      >
+        <h3 className="text-sm font-semibold text-[#0a2540] mb-3 flex items-center gap-2">
+          <span role="img" aria-hidden="true">
+            🛝
+          </span>
+          <span>
+            Amenities overview at{" "}
+            <span className="text-[#6a00f4] font-extrabold">
+              {park?.name || "this playground"}
+            </span>
+          </span>
+        </h3>
+        <Section title="Top features">
+          <BadgeRow
+            items={topMatches}
+            empty="None of your must-haves yet"
+            color="green"
+          />
         </Section>
-        <Section title="Amenities">
-          <BadgeRow items={amenities} empty="Not listed yet" color="blue" />
+        <Section title="Extra amenities">
+          <BadgeRow items={extraAmenities} empty="More details coming soon" color="blue" />
         </Section>
-        <Section title="Needs Improvement">
+        <Section title="Needs improvement">
           <BadgeRow items={needs} empty="Nothing missing 🎉" color="rose" />
         </Section>
-
-        <div className="mt-2">
+        <div className="mt-4 space-y-2">
           <p className="text-sm font-semibold text-[#0a2540]">
-            💛 {matchScore}% Match — {matchText}
+            💛 {matchScore}% match — {matchText}
           </p>
-          <div className="h-2 mt-1 w-full bg-gray-200/60 rounded-full overflow-hidden">
+          <div className="h-2 w-full bg-gray-200/60 rounded-full overflow-hidden">
             <div
               className="h-full bg-gradient-to-r from-[#ffe29a] to-[#ffd1e4]"
               style={{ width: `${matchScore}%` }}
             />
           </div>
         </div>
-      </div>
+      </section>
 
-      {/* MIDDLE — Adaptive Energy Tile */}
-      {park.indoorPlayArea === "yes" ? (
-        <IndoorVibeTile
+      <section className="order-4 md:order-none md:col-span-5 md:row-start-1">
+        {park.indoorPlayArea === "yes" ? (
+          <IndoorVibeTile
+            park={park}
+            counts={counts}
+            status={crowdStatus}
+            vote={vote}
+            updating={crowdUpdating}
+            record={crowdRecord}
+          />
+        ) : (
+          <OutdoorLiveLook
+            weather={weather}
+            environment={environmentBundle}
+            environmentStatus={environmentStatus}
+            counts={counts}
+            parkId={park?.id}
+            status={crowdStatus}
+            updating={crowdUpdating}
+            record={crowdRecord}
+          />
+        )}
+      </section>
+
+      <section className="order-5 md:order-none md:col-span-5 md:row-start-2">
+        <FamilyToolkit
           park={park}
-          counts={counts}
-          status={crowdStatus}
-          vote={vote}
-          updating={crowdUpdating}
-          record={crowdRecord}
+          tips={tips}
+          shareFeedback={shareFeedback}
+          onShare={(message) => setShareFeedback(message)}
         />
-      ) : (
-        <OutdoorLiveLook
-          weather={weather}
-          environment={environmentBundle}
-          environmentStatus={environmentStatus}
-          counts={counts}
-          vote={vote}
-          status={crowdStatus}
-          updating={crowdUpdating}
-          record={crowdRecord}
-        />
-      )}
-
-      {/* RIGHT — Family Toolkit 2.0 */}
-      <FamilyToolkit
-        park={park}
-        tips={tips}
-        shareFeedback={shareFeedback}
-        onShare={(message) => setShareFeedback(message)}
-      />
-    </div>
+      </section>
+    </article>
   );
 }
 
@@ -287,6 +450,17 @@ function Section({ title, children }) {
       {children}
     </div>
   );
+}
+
+function formatAmenityLabel(key) {
+  if (!key) return "";
+  if (AMENITY_LABELS[key]) return AMENITY_LABELS[key];
+  const spaced = String(key)
+    .replace(/([A-Z])/g, " $1")
+    .replace(/[_-]+/g, " ")
+    .trim();
+  if (!spaced) return "";
+  return spaced.charAt(0).toUpperCase() + spaced.slice(1);
 }
 
 function BadgeRow({ items, empty, color }) {
@@ -305,7 +479,7 @@ function BadgeRow({ items, empty, color }) {
           key={x}
           className={`${cls} px-2 py-1 rounded-full text-[11px] font-semibold`}
         >
-          {x}
+          {formatAmenityLabel(x) || x}
         </span>
       ))}
     </div>
@@ -318,24 +492,52 @@ const tallyReports = (counts = {}) =>
     .reduce((sum, val) => sum + val, 0);
 
 const buildCrowdSummary = (counts = {}, record = {}) => {
+  const clean = Number(counts.clean) || 0;
+  const wetGround = Number(counts.conditions || counts.wetGround) || 0;
+  const crowded = Number(counts.crowded) || 0;
+  const concerns = Number(counts.concerns) || 0;
+  const closed = Number(counts.closed) || 0;
   const total = tallyReports(counts);
-  if (record?.status === "closed" || counts.closed > 0) {
+
+  if (record?.status === "closed" || closed > 0) {
     return {
       emoji: "🚫",
       title: "Marked Closed",
-      body: "Recent reports flagged this playground as closed. Tap Directions to verify before heading out.",
+      body:
+        closed === 1
+        ? "One family says this playground is currently closed — double-check before heading out."
+        : `${closed} families say this playground is currently closed — double-check before heading out.`,
       tone: "error",
     };
   }
-  if (counts.concerns > 0) {
+  if (concerns >= 3) {
+    return {
+      emoji: "⚠️",
+      title: "Multiple Concerns",
+      body: `${concerns} families spotted something that needs attention. Have a backup plan just in case.`,
+      tone: "error",
+    };
+  }
+  if (concerns > 0) {
     return {
       emoji: "⚠️",
       title: "Heads Up!",
-      body: "Families shared a concern. Check conditions on arrival.",
+      body:
+        concerns === 1
+          ? "One family shared a concern. Check conditions on arrival."
+          : `${concerns} families shared a concern. Check conditions on arrival.`,
       tone: "warn",
     };
   }
-  if (counts.crowded >= Math.max(3, counts.clean + counts.conditions)) {
+  if (wetGround >= 2) {
+    return {
+      emoji: "💧",
+      title: "Wet Equipment",
+      body: `${wetGround} reports of damp equipment — bring towels or water shoes.`,
+      tone: "warn",
+    };
+  }
+  if (crowded >= Math.max(3, clean + wetGround)) {
     return {
       emoji: "🎉",
       title: "Busy & Lively",
@@ -343,19 +545,19 @@ const buildCrowdSummary = (counts = {}, record = {}) => {
       tone: "busy",
     };
   }
-  if (counts.clean + counts.conditions > 0) {
+  if (clean + wetGround > 0) {
     return {
       emoji: "🌿",
       title: "Wide Open",
-      body: "Parents say it feels relaxed with good conditions.",
+      body: "Families say it feels relaxed with good conditions.",
       tone: "chill",
     };
   }
   if (total === 0) {
     return {
-      emoji: "👋",
-      title: "Share a Quick Update",
-      body: "Let other families know what it looks like right now.",
+      emoji: "📡",
+      title: "Live reporting",
+      body: "No updates yet — tap a button to share what you see.",
       tone: "idle",
     };
   }
@@ -376,7 +578,7 @@ const renderStatusLabel = (status) => {
     case "updating":
       return "Sending your update…";
     default:
-      return "Updated every few minutes.";
+      return "Live signals refresh every 15 minutes — here’s the latest.";
   }
 };
 
@@ -389,12 +591,11 @@ const AQI_BANDS = [
   { max: Infinity, label: "Hazardous" },
 ];
 
-const POLLEN_BANDS = [
-  { max: 2, label: "Low" },
-  { max: 4, label: "Moderate" },
-  { max: 6, label: "High" },
-  { max: Infinity, label: "Very High" },
-];
+function describeAqi(value) {
+  if (value == null) return "—";
+  const band = AQI_BANDS.find((entry) => value <= entry.max) ?? AQI_BANDS[AQI_BANDS.length - 1];
+  return `${value} • ${band.label}`;
+}
 
 function EnvMetric({ emoji, label, value }) {
   return (
@@ -415,19 +616,18 @@ function formatTime(isoString) {
   return date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 }
 
-function describeAqi(value) {
-  if (value == null) return "—";
-  const band = AQI_BANDS.find((entry) => value <= entry.max) ?? AQI_BANDS[AQI_BANDS.length - 1];
-  return `${value} • ${band.label}`;
+function describeWeather(code) {
+  if (code == null) return { icon: "🌤️", label: "Weather" };
+  const numeric = Number(code);
+  const match = WEATHER_CODE_MAP.find((entry) => entry.codes.includes(numeric));
+  return match || { icon: "🌤️", label: "Weather" };
 }
 
-function describePollen(value) {
-  if (value == null) return "—";
-  const numeric = Number(value);
-  if (!Number.isFinite(numeric)) return `${value} • Unknown`;
-  const band =
-    POLLEN_BANDS.find((entry) => numeric <= entry.max) ?? POLLEN_BANDS[POLLEN_BANDS.length - 1];
-  return `${numeric.toFixed(1)} • ${band.label}`;
+function formatWind(value) {
+  if (value == null) return "Wind —";
+  const rounded = Math.round(Number(value));
+  if (!Number.isFinite(rounded)) return "Wind —";
+  return `Wind ${rounded} mph`;
 }
 
 /* ---------- Live Look (Outdoor) ---------- */
@@ -436,166 +636,158 @@ function OutdoorLiveLook({
   environment,
   environmentStatus,
   counts,
-  vote,
+  parkId,
   status,
   updating,
   record,
 }) {
-  const summary = buildCrowdSummary(counts, record);
-  const totalReports = tallyReports(counts);
+  const summary = useMemo(() => buildCrowdSummary(counts, record), [counts, record]);
+  const liveCounts = useMemo(
+    () => ({
+      clean: Number(counts.clean) || 0,
+      wetGround: Number(counts.conditions) || 0,
+      crowded: Number(counts.crowded) || 0,
+      concerns: Number(counts.concerns) || 0,
+      closed: Number(counts.closed) || 0,
+      iceCream: Number(counts.icecream) || 0,
+    }),
+    [counts]
+  );
+  const totalReports = useMemo(
+    () =>
+      Object.values(liveCounts).reduce(
+        (sum, value) => sum + (Number.isFinite(value) ? Number(value) : 0),
+        0
+      ),
+    [liveCounts]
+  );
+  const showSummaryCard = summary.tone !== "idle" && totalReports > 0;
   const statusLabel = renderStatusLabel(updating ? "updating" : status);
   const envCurrent = environment?.current ?? null;
-  const envReady = environmentStatus === "ready" && envCurrent;
-  const envLoading = environmentStatus === "loading";
-  const envError = environmentStatus === "error";
+  const metricsStatus =
+    environmentStatus === "error"
+      ? "error"
+      : environmentStatus === "loading" || (!weather && environmentStatus !== "ready")
+      ? "loading"
+      : "ready";
+
+  const envReady = metricsStatus === "ready" && envCurrent;
+  const envLoading = metricsStatus === "loading";
+  const envError = metricsStatus === "error";
+  const weatherSummary = useMemo(
+    () => describeWeather(weather?.weathercode),
+    [weather?.weathercode]
+  );
+  const temperatureDisplay =
+    weather?.temperature != null
+      ? Math.round(weather.temperature)
+      : envCurrent?.temperatureF != null
+      ? Math.round(envCurrent.temperatureF)
+      : null;
+  const windText = formatWind(weather?.windspeed ?? envCurrent?.windMph);
 
   return (
     <div className="rounded-2xl border border-yellow-100 bg-[#fffdf3] p-4 flex flex-col gap-3">
-      <div className="flex items-start justify-between gap-3">
+      <div className="flex items-start justify-between gap-3 flex-wrap">
         <div>
-          <h3 className="text-sm font-semibold text-[#0a2540]">
-            ☀️ Live Look
+          <h3 className="text-sm font-semibold text-[#0a2540] flex items-center gap-2">
+            <span role="img" aria-hidden="true">
+              ☀️
+            </span>
+            <span>Live Look</span>
           </h3>
-          <p className="text-[11px] text-gray-500">{statusLabel}</p>
+          <p className="text-[11px] text-gray-500">
+            Here's a snapshot of the current weather in your area.
+          </p>
         </div>
-        {weather ? (
-          <div className="text-xs bg-white/90 rounded-md px-2 py-1 border border-yellow-100 shadow-sm">
-            <span className="font-semibold">{Math.round(weather.temperature)}°F</span>
-            <span className="mx-1">•</span>
-            Wind {Math.round(weather.windspeed)} mph
+        {temperatureDisplay != null ? (
+          <div className="flex items-center gap-3 bg-white/90 rounded-xl px-3 py-2 border border-yellow-100 shadow-sm">
+            <span className="text-2xl leading-none" aria-hidden="true">
+              {weatherSummary.icon}
+            </span>
+            <div className="text-center flex-1">
+              <p className="text-lg font-extrabold text-[#0a2540] leading-tight">
+                {temperatureDisplay}°F
+              </p>
+              <p className="text-sm font-extrabold text-[#0a2540] uppercase tracking-wide">
+                {weatherSummary.label}
+              </p>
+            </div>
+            <span className="ml-auto text-[11px] text-[#0a2540]/70 whitespace-nowrap">
+              {windText}
+            </span>
           </div>
         ) : (
-          <p className="text-[11px] text-gray-500 italic">Weather loading…</p>
+          <div className="text-center text-[11px] text-gray-500 italic">
+            Weather snapshot loading…
+          </div>
         )}
       </div>
 
-      {environmentStatus !== "idle" && (
-        <div className="rounded-xl px-3 py-3 bg-[#e8f7ff] border border-sky-100 shadow-inner text-[11px] text-[#064b66]">
-          <p className="font-semibold text-xs mb-2 flex items-center gap-2">
-            <span>🌤</span>
-            <span>Environment snapshot</span>
-          </p>
-          {envLoading && <p>Checking air quality and pollen…</p>}
-          {envError && (
-            <p>Couldn&apos;t reach the weather service right now. Try again soon.</p>
-          )}
-          {envReady && (
-            <div className="grid grid-cols-2 gap-2">
-              <EnvMetric
-                label="Sunrise"
-                value={formatTime(envCurrent.sunrise)}
-                emoji="🌅"
-              />
-              <EnvMetric
-                label="Sunset"
-                value={formatTime(envCurrent.sunset)}
-                emoji="🌙"
-              />
-              <EnvMetric
-                label="Rain chance"
-                value={
-                  envCurrent.precipitationProbability != null
-                    ? `${Math.round(envCurrent.precipitationProbability)}%`
-                    : "—"
-                }
-                emoji="🌧️"
-              />
-              <EnvMetric
-                label="Air quality"
-                value={describeAqi(envCurrent.airQuality?.usAqi)}
-                emoji="😮‍💨"
-              />
-              <EnvMetric
-                label="Pollen"
-                value={describePollen(envCurrent.pollen?.average)}
-                emoji="🌸"
-              />
-            </div>
-          )}
+      <div className="rounded-xl px-3 py-3 bg-[#e8f7ff] border border-sky-100 shadow-inner text-[11px] text-[#064b66]">
+        <p className="font-semibold text-xs mb-2 flex items-center gap-2">
+          <span>🌤</span>
+          <span>Environment snapshot</span>
+        </p>
+        {envLoading && <p>Checking air quality…</p>}
+        {envError && <p>Couldn't reach the weather service right now. Try again soon.</p>}
+        {envReady && (
+          <div className="grid grid-cols-2 gap-2">
+            <EnvMetric label="Sunrise" value={formatTime(envCurrent.sunrise)} emoji="🌅" />
+            <EnvMetric label="Sunset" value={formatTime(envCurrent.sunset)} emoji="🌙" />
+            <EnvMetric
+              label="Rain chance"
+              value={
+                envCurrent.precipitationProbability != null
+                  ? `${Math.round(envCurrent.precipitationProbability)}%`
+                  : "—"
+              }
+              emoji="🌧️"
+            />
+            <EnvMetric label="Air quality" value={describeAqi(envCurrent.airQuality?.usAqi)} emoji="😮‍💨" />
+            <EnvMetric
+              label="Feels like"
+              value={
+                envCurrent.temperatureF != null
+                  ? `${Math.round(envCurrent.temperatureF)}°F`
+                  : "—"
+              }
+              emoji="🌡️"
+            />
+            <EnvMetric label="Wind" value={windText.replace("Wind ", "") || "—"} emoji="🍃" />
+          </div>
+        )}
+      </div>
+
+      {showSummaryCard && (
+        <div
+          className={`rounded-xl px-3 py-3 bg-white/90 border ${
+            summary.tone === "error"
+              ? "border-red-200"
+              : summary.tone === "warn"
+              ? "border-amber-200"
+              : summary.tone === "busy"
+              ? "border-orange-200"
+              : "border-green-100"
+          } shadow-sm flex items-start gap-3`}
+        >
+          <span className="text-2xl leading-none">{summary.emoji}</span>
+          <div className="text-xs text-[#0a2540]">
+            <p className="font-semibold text-sm">{summary.title}</p>
+            <p className="leading-relaxed mt-1">{summary.body}</p>
+            <p className="mt-2 text-[11px] text-gray-500">
+              {totalReports} recent report{totalReports === 1 ? "" : "s"}
+            </p>
+          </div>
         </div>
       )}
 
-      <div
-        className={`rounded-xl px-3 py-3 bg-white/90 border ${
-          summary.tone === "error"
-            ? "border-red-200"
-            : summary.tone === "warn"
-            ? "border-amber-200"
-            : summary.tone === "busy"
-            ? "border-orange-200"
-            : "border-green-100"
-        } shadow-sm flex items-start gap-3`}
-      >
-        <span className="text-2xl leading-none">{summary.emoji}</span>
-        <div className="text-xs text-[#0a2540]">
-          <p className="font-semibold text-sm">{summary.title}</p>
-          <p className="leading-relaxed mt-1">{summary.body}</p>
-          <p className="mt-2 text-[11px] text-gray-500">
-            {totalReports > 0
-              ? `${totalReports} recent report${totalReports === 1 ? "" : "s"}`
-              : "No reports yet"}
-          </p>
-        </div>
-      </div>
-
-      <p className="text-[11px] text-[#0a2540]/70 -mt-1">
-        Tap a button below to share what you see right now.
-      </p>
-
-      <div className="grid grid-cols-2 gap-2 text-xs">
-        <CButton
-          icon="🧼"
-          label="Clean"
-          title="Area is tidy"
-          count={counts.clean}
-          onClick={() => vote("clean")}
-          disabled={updating}
-        />
-        <CButton
-          icon="💧"
-          label="Wet Ground"
-          title="Equipment or surfaces are wet"
-          count={counts.conditions}
-          onClick={() => vote("conditions")}
-          disabled={updating}
-        />
-        <CButton
-          icon="🚸"
-          label="Crowded"
-          title="Lots of people right now"
-          count={counts.crowded}
-          onClick={() => vote("crowded")}
-          disabled={updating}
-        />
-        <CButton
-          icon="😐"
-          label="Concerns"
-          title="Something needs attention"
-          count={counts.concerns}
-          onClick={() => vote("concerns")}
-          disabled={updating}
-        />
-        <CButton
-          icon="🚫"
-          label="Closed"
-          title="Location is closed"
-          count={counts.closed}
-          onClick={() => vote("closed")}
-          disabled={updating}
-        />
-        <CButton
-          icon="🍦"
-          label="Ice Cream"
-          title="Treat truck spotted"
-          count={counts.icecream}
-          onClick={() => vote("icecream")}
-          disabled={updating}
-        />
-      </div>
-
-      <p className="text-[11px] text-gray-600 border-t border-yellow-100 pt-2 leading-relaxed">
-        Clean = litter-free · Wet Ground = equipment or surfaces are wet · Crowded = busy now · Concerns = safety alerts · Closed = not open · Ice Cream = treat truck spotted.
-      </p>
+      <LiveReportSection
+        dataUrl={CROWD_SENSE_URL}
+        parkId={parkId}
+        initialCounts={liveCounts}
+        statusLabel={statusLabel}
+      />
     </div>
   );
 }
@@ -631,39 +823,44 @@ function IndoorVibeTile({ park, counts, status, vote, updating, record }) {
         </div>
       </div>
 
-      <p className="text-[11px] text-[#0a2540]/70 mb-1">
-        Tap a button below to share the indoor vibe.
-      </p>
-
-      <div className="grid grid-cols-2 gap-2 text-xs">
-        <CButton
-          icon="🌿"
-          label="Chill"
-          title="Relaxed vibe"
-          onClick={() => vote("crowded")}
-          disabled={updating}
-        />
-        <CButton
-          icon="🎉"
-          label="Busy & Fun"
-          title="High energy right now"
-          onClick={() => vote("crowded")}
-          disabled={updating}
-        />
-        <CButton
-          icon="😐"
-          label="Concerns"
-          title="Something needs attention"
-          onClick={() => vote("concerns")}
-          disabled={updating}
-        />
-        <CButton
-          icon="🚫"
-          label="Closed"
-          title="Location is closed"
-          onClick={() => vote("closed")}
-          disabled={updating}
-        />
+      <div className="bg-white/90 border border-dashed border-[#fbbf24]/70 rounded-xl px-3 py-3 text-[11px] text-[#92400e] flex flex-col gap-2">
+        <div className="font-semibold flex items-center gap-2">
+          <span>📣</span>
+          <span>Live reporting — refreshes every 15 minutes</span>
+        </div>
+        <p className="text-[#92400e]/90">
+          Tap a button to share the indoor vibe so other families know whether it feels chill or high-energy.
+        </p>
+        <div className="grid grid-cols-2 gap-2 text-xs text-[#0a2540]">
+          <CButton
+            icon="🌿"
+            label="Chill"
+            title="Relaxed vibe"
+            onClick={() => vote("crowded")}
+            disabled={updating}
+          />
+          <CButton
+            icon="🎉"
+            label="Busy & Fun"
+            title="High energy right now"
+            onClick={() => vote("crowded")}
+            disabled={updating}
+          />
+          <CButton
+            icon="😐"
+            label="Concerns"
+            title="Something needs attention"
+            onClick={() => vote("concerns")}
+            disabled={updating}
+          />
+          <CButton
+            icon="🚫"
+            label="Closed"
+            title="Location is closed"
+            onClick={() => vote("closed")}
+            disabled={updating}
+          />
+        </div>
       </div>
 
       {park.liveAnnouncement && (
@@ -712,20 +909,26 @@ function FamilyToolkit({ park, tips, shareFeedback, onShare }) {
 
   return (
     <div className="rounded-2xl border border-pink-100 bg-[#fff7fb] p-4 flex flex-col gap-4">
-      <div className="space-y-3">
-        <ParkPhoto park={park} />
+      <header className="space-y-2">
+        <h4 className="text-sm font-semibold text-[#0a2540] flex items-center gap-2">
+          <span role="img" aria-hidden="true">
+            🧺
+          </span>
+          Family Toolkit
+        </h4>
+        <p className="text-[11px] text-[#0a2540]/80">
+          Quick links and pack lists to make the visit easy.
+        </p>
         <div className="flex flex-col sm:flex-row gap-2">
           <ShareLinkButton
-            icon="📷"
-            label="Share a Photo"
-            href={buildPhotoFormUrl(park)}
-            onShare={() => onShare("Photo form opened in a new tab — thank you for sharing!")}
-          />
-          <ShareLinkButton
             icon="💬"
-            label="Share a Tip"
+            label="Share a tip about this park"
             href={buildTipFormUrl(park)}
-            onShare={() => onShare("Tip form opened in a new tab — thank you for helping other families!")}
+            onShare={() =>
+              onShare(
+                "Tip form opened in a new tab — thank you for helping other families!"
+              )
+            }
           />
         </div>
         {shareFeedback && (
@@ -733,10 +936,11 @@ function FamilyToolkit({ park, tips, shareFeedback, onShare }) {
             {shareFeedback}
           </div>
         )}
-      </div>
+      </header>
+
       <div className="space-y-3">
         <div>
-          <h4 className="text-sm font-semibold text-[#0a2540] mb-1">🧺 Family Toolkit</h4>
+          <p className="text-xs font-semibold text-[#0a2540] mb-1">Highlights</p>
           <ul className="text-xs text-[#0a2540] leading-relaxed space-y-1">
             {highlights.length > 0 ? (
               highlights.map((item) => <li key={item}>{item}</li>)
@@ -747,7 +951,7 @@ function FamilyToolkit({ park, tips, shareFeedback, onShare }) {
         </div>
 
         <div className="bg-white/80 border border-pink-100 rounded-lg p-3">
-          <p className="text-xs font-semibold text-[#0a2540] mb-2">Pack This</p>
+          <p className="text-xs font-semibold text-[#0a2540] mb-2">Pack this</p>
           <ul className="text-[11px] text-[#0a2540] leading-relaxed list-disc ml-4 space-y-1">
             {packList.map((item) => (
               <li key={item}>{item}</li>
@@ -757,7 +961,7 @@ function FamilyToolkit({ park, tips, shareFeedback, onShare }) {
 
         {hasTips && (
           <div className="bg-white/80 border border-pink-100 rounded-lg p-3 text-xs text-[#0a2540] space-y-2">
-            <p className="font-semibold">Parent Tips</p>
+            <p className="font-semibold">Parent tips</p>
             {highlightTip && <p>💬 {highlightTip}</p>}
             {extraTips.map((t, i) => (
               <p key={`${i}-${t.slice(0, 12)}`} className="text-[11px] text-[#0a2540]/80">
@@ -805,7 +1009,7 @@ function CButton({ icon, label, count, onClick, disabled, title }) {
   );
 }
 
-function ParkPhoto({ park }) {
+function ParkPhoto({ park, onShare }) {
   const [imgSrc, setImgSrc] = React.useState(null);
 
   React.useEffect(() => {
@@ -842,11 +1046,11 @@ function ParkPhoto({ park }) {
   return (
     <div className="flex flex-col gap-2">
       {hasPhoto ? (
-        <div className="relative">
+        <div className="relative w-full overflow-hidden rounded-lg border border-white shadow-sm aspect-[4/3]">
           <img
             src={imgSrc}
             alt={park?.name || "Playground Photo"}
-            className="rounded-lg w-full h-28 object-cover border border-white shadow-sm"
+            className="w-full h-full object-cover"
             onError={() => setImgSrc(null)}
           />
           <span className="absolute top-2 left-2 text-[10px] uppercase tracking-wide bg-black/55 text-white px-2 py-1 rounded-full">
@@ -854,11 +1058,11 @@ function ParkPhoto({ park }) {
           </span>
         </div>
       ) : (
-        <div className="rounded-xl h-28 border border-dashed border-[#1fb6ff]/40 bg-gradient-to-br from-[#c3f1ff] via-[#a6e9ff] to-[#d7fff6] flex flex-col justify-center px-4 py-3 shadow-inner">
-          <p className="text-sm font-semibold text-[#045472]">📸 Photo coming soon!</p>
-          <p className="text-[11px] text-[#045472]/75 leading-relaxed mt-1">
+        <div className="rounded-xl border border-dashed border-[#1fb6ff]/40 bg-gradient-to-br from-[#c3f1ff] via-[#a6e9ff] to-[#d7fff6] flex flex-col justify-center px-4 py-5 shadow-inner aspect-[4/3] w-full">
+          <p className="text-sm font-semibold text-[#045472] text-center">📸 Photo coming soon!</p>
+          <p className="text-[11px] text-[#045472]/75 leading-relaxed mt-2 text-center">
             Be the first to share a snap of {park?.name || "this playground"} and help families plan
-            their playday.
+            their day.
           </p>
         </div>
       )}
@@ -868,6 +1072,16 @@ function ParkPhoto({ park }) {
           <span>{park.photoCredit}</span>
         </p>
       )}
+      <ShareLinkButton
+        icon="📷"
+        label="Share a Photo"
+        href={buildPhotoFormUrl(park)}
+        onShare={() =>
+          onShare?.(
+            "Photo form opened in a new tab — thank you for sharing!"
+          )
+        }
+      />
     </div>
   );
 }

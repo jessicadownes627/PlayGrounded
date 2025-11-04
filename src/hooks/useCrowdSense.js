@@ -1,7 +1,7 @@
 // src/hooks/useCrowdSense.js
 import { useEffect, useMemo, useState } from "react";
 
-const SCRIPT_URL =
+export const CROWD_SENSE_URL =
   import.meta.env.VITE_SHEET_JSON_URL ||
   "https://script.google.com/macros/s/AKfycbwfk-5FhIJxcowwUCMAd27KIVKTCct-9Hx-ym4Io3H_3STz6E3QgQrDKtkAxu9bo8vS/exec";
 
@@ -56,7 +56,7 @@ const fetchCrowdFeed = async () => {
 
   inflight = (async () => {
     try {
-      const response = await fetch(SCRIPT_URL, { cache: "no-store" });
+      const response = await fetch(CROWD_SENSE_URL, { cache: "no-store" });
       if (!response.ok) throw new Error(`CrowdSense fetch failed: ${response.status}`);
 
       const json = await response.json();
@@ -152,7 +152,7 @@ export function useCrowdSense(parkId) {
     if (!parkId || !value) return;
     setIsSubmitting(true);
     try {
-      await fetch(SCRIPT_URL, {
+      await fetch(CROWD_SENSE_URL, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

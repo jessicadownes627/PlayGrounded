@@ -173,6 +173,9 @@ export async function fetchPlaygrounds() {
   } catch (e) {
     console.error("🚨 fetchPlaygrounds failed:", e);
     console.warn("⚠️ Falling back to local data.");
-    return local;
+    if (Array.isArray(local)) return local;
+    if (Array.isArray(local?.data)) return local.data;
+    if (local && typeof local === "object") return [local];
+    return [];
   }
 }

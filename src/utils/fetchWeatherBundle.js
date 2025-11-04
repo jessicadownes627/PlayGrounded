@@ -1,5 +1,5 @@
 // src/utils/fetchWeatherBundle.js
-// Fetch forecast, air quality, and pollen data for a given lat/lon via Open-Meteo services.
+// Fetch forecast and air quality data for a given lat/lon via Open-Meteo services.
 
 const TIMEZONE = "America/New_York";
 const cache = new Map();
@@ -45,16 +45,9 @@ async function fetchBundle(lat, lon) {
   airUrl.searchParams.set("hourly", "us_aqi,pm10,pm2_5,ozone");
   airUrl.searchParams.set("timezone", TIMEZONE);
 
-  const pollenUrl = new URL("https://pollen-api.open-meteo.com/v1/forecast");
-  pollenUrl.searchParams.set("latitude", lat);
-  pollenUrl.searchParams.set("longitude", lon);
-  pollenUrl.searchParams.set("daily", "grass_pollen,tree_pollen,weed_pollen");
-  pollenUrl.searchParams.set("timezone", TIMEZONE);
-
-  const [forecastResult, airResult, pollenResult] = await Promise.allSettled([
+  const [forecastResult, airResult] = await Promise.allSettled([
     fetchJson(forecastUrl),
     fetchJson(airUrl),
-    fetchJson(pollenUrl),
   ]);
 
   if (forecastResult.status !== "fulfilled") {
@@ -63,7 +56,6 @@ async function fetchBundle(lat, lon) {
 
   const forecastJson = forecastResult.value;
   const airJson = airResult.status === "fulfilled" ? airResult.value : null;
-  const pollenJson = pollenResult.status === "fulfilled" ? pollenResult.value : null;
 
   const now = Date.now();
   const forecastIndex = findClosestIndex(forecastJson?.hourly?.time ?? [], now);
@@ -84,14 +76,9 @@ async function fetchBundle(lat, lon) {
   const pm25 = readValue(airJson?.hourly?.pm2_5, airIndex);
   const ozone = readValue(airJson?.hourly?.ozone, airIndex);
 
-  const grass = pollenJson?.daily?.grass_pollen?.[0] ?? null;
-  const tree = pollenJson?.daily?.tree_pollen?.[0] ?? null;
-  const weed = pollenJson?.daily?.weed_pollen?.[0] ?? null;
-
   return {
     forecast: forecastJson,
     airQuality: airJson,
-    pollen: pollenJson,
     current: {
       temperatureC,
       temperatureF: temperatureC != null ? cToF(temperatureC) : null,
@@ -105,12 +92,6 @@ async function fetchBundle(lat, lon) {
         pm10,
         pm2_5: pm25,
         ozone,
-      },
-      pollen: {
-        grass,
-        tree,
-        weed,
-        average: average([grass, tree, weed]),
       },
     },
   };
@@ -142,12 +123,6 @@ function findClosestIndex(times, nowMs) {
     }
   });
   return bestIdx;
-}
-
-function average(values) {
-  const valid = values.filter((v) => typeof v === "number" && !Number.isNaN(v));
-  if (!valid.length) return null;
-  return valid.reduce((sum, v) => sum + v, 0) / valid.length;
 }
 
 const cToF = (c) => Math.round((c * 9) / 5 + 32);
