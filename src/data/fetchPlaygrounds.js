@@ -1,35 +1,78 @@
 // src/data/fetchPlaygrounds.js
+import Papa from "papaparse";
 import local from "./playgrounds.local.json";
 
-export async function fetchPlaygrounds() {
-  const url = import.meta.env.VITE_SHEET_JSON_URL;
+async function parseSheetResponse(response) {
+  try {
+    const jsonAttempt = await response.clone().json();
+    return jsonAttempt;
+  } catch (jsonErr) {
+    // Not JSON, fall back to CSV/text parsing
+  }
 
-  if (!url) {
-    console.warn("⚠️ No VITE_SHEET_JSON_URL found — using local data.");
+  const text = await response.text();
+  if (!text || !text.trim()) return [];
+
+  const parsed = Papa.parse(text, {
+    header: true,
+    skipEmptyLines: true,
+    transformHeader: (header) => header.trim(),
+  });
+
+  if (parsed.errors?.length) {
+    console.warn("⚠️ CSV parse warnings:", parsed.errors);
+  }
+  return Array.isArray(parsed.data) ? parsed.data : [];
+}
+
+async function fetchFromSource(url) {
+  const attempt = async (endpoint, label) => {
+    const res = await fetch(endpoint, { cache: "no-store" });
+    if (!res.ok) {
+      throw new Error(`${label} fetch failed ${res.status}`);
+    }
+    return parseSheetResponse(res);
+  };
+
+  try {
+    return await attempt(url, "Direct");
+  } catch (directErr) {
+    console.warn(`⚠️ Direct fetch failed for ${url}, trying proxy:`, directErr);
+    const proxyUrl = `https://corsproxy.io/?${url}`;
+    return await attempt(proxyUrl, "Proxy");
+  }
+}
+
+export async function fetchPlaygrounds() {
+  const primaryUrl = import.meta.env.VITE_SHEET_JSON_URL;
+  const fallbackCsvUrl = import.meta.env.VITE_SHEET_CSV_URL;
+  const sources = [primaryUrl, fallbackCsvUrl].filter(Boolean);
+
+  if (!sources.length) {
+    console.warn("⚠️ No sheet URLs configured — using local data.");
     return local;
   }
 
   try {
-    let json;
-    try {
-      const direct = await fetch(url, { cache: "no-store" });
-      if (!direct.ok) {
-        throw new Error(`Direct fetch failed ${direct.status}`);
+    let json = null;
+    let lastError = null;
+
+    for (const source of sources) {
+      try {
+        console.log("🌐 Fetching playgrounds from:", source);
+        json = await fetchFromSource(source);
+        break;
+      } catch (err) {
+        lastError = err;
+        console.warn(`⚠️ Failed to load from ${source}:`, err);
       }
-      json = await direct.json();
-    } catch (directErr) {
-      console.warn("⚠️ Direct fetch failed, using proxy:", directErr);
-      const proxyRes = await fetch(
-        `https://corsproxy.io/?${encodeURIComponent(url)}`,
-        { cache: "no-store" }
-      );
-      if (!proxyRes.ok) {
-        throw new Error(`Proxy fetch failed ${proxyRes.status}`);
-      }
-      json = await proxyRes.json();
     }
 
-    console.log("🧠 Raw JSON from Apps Script:", json);
+    if (!json) {
+      throw lastError || new Error("No sheet sources succeeded");
+    }
+
+    console.log("🧠 Raw sheet payload:", json);
 
     const data = Array.isArray(json)
       ? json
@@ -37,8 +80,11 @@ export async function fetchPlaygrounds() {
       ? json.data
       : [];
 
-    console.log("📦 Parsed playgrounds array:", data);
-    window.lastPlaygrounds = data; // for debugging
+ if (typeof window !== "undefined") {
+  window.lastPlaygrounds = data;
+  console.log("🪄 window.lastPlaygrounds now holds", data.length, "entries");
+}
+
 
     // ✅ Normalize data and include adaptiveEquipment + imageUrl
     const cleaned = data
@@ -62,6 +108,11 @@ export async function fetchPlaygrounds() {
         const overrideUrlCandidate =
           (typeof p.photoOverride === "string" && p.photoOverride.trim()) ||
           (typeof p.photo_override === "string" && p.photo_override.trim()) ||
+          (typeof p.photoOverric === "string" && p.photoOverric.trim()) ||
+          (typeof p.photoOverrideUrl === "string" && p.photoOverrideUrl.trim()) ||
+          (typeof p.photo_override_url === "string" && p.photo_override_url.trim()) ||
+          (typeof p["photo override"] === "string" && p["photo override"].trim()) ||
+          (typeof p["Photo Override"] === "string" && p["Photo Override"].trim()) ||
           "";
         const overrideUrl =
           overrideUrlCandidate && overrideUrlCandidate.match(/^https?:\/\//i)
@@ -112,6 +163,20 @@ export async function fetchPlaygrounds() {
           imageUrlRaw = cleanedLink;
         }
 
+        const altNameRaw =
+          p.aka ||
+          p.AKA ||
+          p.altName ||
+          p.alt_name ||
+          p.alternateName ||
+          p.alternate_name ||
+          p.alternativeName ||
+          p.alsoKnownAs ||
+          p.also_known_as ||
+          p.nickname ||
+          p.nickName ||
+          "";
+
         const tipText =
           (typeof p.tipText === "string" && p.tipText) ||
           (typeof p.tip_text === "string" && p.tip_text) ||
@@ -122,6 +187,9 @@ export async function fetchPlaygrounds() {
           (typeof p.tip_source === "string" && p.tip_source) ||
           (typeof p.source === "string" && p.source) ||
           "";
+
+        const normalizedAka =
+          typeof altNameRaw === "string" ? altNameRaw.trim() : "";
 
         return {
           id: String(p.id ?? `${lat},${lng}`),
@@ -164,6 +232,8 @@ export async function fetchPlaygrounds() {
           photoReference,
           tipText,
           tipSource,
+          akaName: normalizedAka,
+          aka: normalizedAka,
         };
       })
       .filter(Boolean);

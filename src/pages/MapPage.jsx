@@ -33,13 +33,34 @@ export default function MapPage() {
   const location = useLocation();
 
   const activeFilters = location.state?.filters || [];
-  const playMode = location.state?.playMode || "outdoor"; // indoor or outdoor
+  const initialPlayMode =
+    location.state?.playMode ||
+    (typeof window !== "undefined"
+      ? localStorage.getItem("heyplay_mode") || "outdoor"
+      : "outdoor");
+  const [playMode, setPlayMode] = useState(initialPlayMode); // indoor or outdoor
   const isIndoorMode = playMode === "indoor";
 
   const { isLoaded } = useJsApiLoader({
     id: "google-map-script",
     googleMapsApiKey: import.meta.env.VITE_GOOGLE_MAPS_API_KEY,
   });
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      localStorage.setItem("heyplay_mode", playMode);
+    }
+  }, [playMode]);
+
+  useEffect(() => {
+    setSelectedPark(null);
+    setShowAll(false);
+  }, [playMode]);
+
+  const handlePlayModeChange = (mode) => {
+    if (mode === playMode) return;
+    setPlayMode(mode);
+  };
 
   /* ---------- Load Data ---------- */
   useEffect(() => {
@@ -390,13 +411,16 @@ export default function MapPage() {
     <div className="relative min-h-screen bg-gradient-to-b from-[#b7f3da] via-[#c7e9f9] to-[#9fd3f7] text-[#0e3325] font-[Nunito]">
       {/* Header */}
       <header className="text-center pt-6 pb-3">
-        <h1 className="text-3xl font-extrabold tracking-tight">PlayGrounded</h1>
+        <h1 className="text-3xl font-extrabold tracking-tight">
+          <span className="text-[#f06292]">Hey</span>
+          <span>PlayGrounded</span>
+        </h1>
         <p className="text-sm opacity-80">
           {playMode === "indoor"
-            ? "Hey! Showing indoor play spaces nearby!"
-            : "Hey! Showing outdoor playgrounds nearby!"}
+            ? "Curated indoor play spaces from Long Island parents."
+            : "Fresh outdoor park intel for wherever you roam."}
         </p>
-        {activeFilters.length > 0 && (
+        {activeFilters.length > 0 && !isIndoorMode && (
           <p className="text-xs mt-2 opacity-70">
             Ranked by: {activeFilters.join(", ")} (within {Math.round(maxRadiusMiles)} miles)
           </p>
@@ -421,6 +445,49 @@ export default function MapPage() {
               Clear
             </button>
           )}
+        </div>
+      </div>
+
+      <div className="mt-4 px-4 md:px-6">
+        <div className="max-w-3xl mx-auto flex justify-center gap-3">
+          {[
+            { key: "outdoor", label: "Outdoor Parks", emoji: "🛝" },
+            { key: "indoor", label: "Indoor Play", emoji: "🏠" },
+          ].map((mode) => {
+            const isActive = playMode === mode.key;
+            return (
+              <button
+                key={mode.key}
+                type="button"
+                onClick={() => handlePlayModeChange(mode.key)}
+                className={`flex items-center gap-2 px-4 py-2 rounded-full text-sm font-semibold transition-all ${
+                  isActive
+                    ? "bg-[#f06292] text-white shadow-[0_6px_16px_rgba(240,98,146,0.3)]"
+                    : "bg-white/80 text-[#b84b74] border border-[#f8b4c8] hover:bg-white"
+                }`}
+              >
+                <span>{mode.emoji}</span>
+                <span>{mode.label}</span>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      <div className="mt-3 px-4 md:px-6">
+        <div className="max-w-3xl mx-auto rounded-3xl border border-[#fed7aa] bg-gradient-to-r from-[#fff7ed] via-[#fff1e1] to-[#ffe4d3] px-6 py-4 text-center text-sm text-[#8a3a0a] shadow-[0_10px_30px_rgba(255,122,0,0.15)]">
+          <span className="font-bold uppercase tracking-wide text-[#fb923c]">
+            Know of another great place to play?
+          </span>{" "}
+          Email us at{" "}
+          <a
+            href="mailto:heyplaygrounded@gmail.com"
+            className="inline-flex items-center gap-1 rounded-full bg-white px-3 py-1 text-xs font-semibold text-[#ea580c] shadow-sm transition hover:bg-[#ffe8d0]"
+          >
+            heyplaygrounded@gmail.com
+            <span aria-hidden="true">↗</span>
+          </a>
+          .
         </div>
       </div>
 

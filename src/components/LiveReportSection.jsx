@@ -542,7 +542,7 @@ export default function LiveReportSection({ dataUrl, parkId, initialCounts = {},
       </header>
 
       <div className="grid grid-cols-2 gap-2 md:grid-cols-3">
-        {BUTTONS.map(({ key, icon, label, payload }) => {
+        {BUTTONS.map(({ key, icon, label, payload, legend }) => {
           const serverCount = Number(counts[key]) || 0;
           const localExpires = localSignals[key] || 0;
           const localActive = localExpires > Date.now();
@@ -576,7 +576,7 @@ export default function LiveReportSection({ dataUrl, parkId, initialCounts = {},
                 {sentMap[key] && (
                   <span className="text-[11px] text-emerald-600 font-medium">✅ Sent!</span>
                 )}
-                {localActive && (
+                {(sentMap[key] || localActive) && (
                   <span className="text-[10px] text-[#0a2540]/70">Tap again to undo</span>
                 )}
               </button>
@@ -612,21 +612,21 @@ export default function LiveReportSection({ dataUrl, parkId, initialCounts = {},
             return (
               <div
                 key={key}
-                className={`rounded-xl border px-4 py-4 shadow-sm flex flex-col items-center text-center gap-2 ${paletteClasses}`}
+                className={`rounded-xl border px-3 py-3 shadow-sm flex items-center gap-3 ${paletteClasses}`}
               >
                 <span className="text-2xl leading-none">{icon}</span>
-                <div className="flex items-baseline gap-1 text-current">
-                  <span className="text-lg font-extrabold tabular-nums">{count}</span>
-                  <span className="text-[11px] font-semibold uppercase tracking-wide opacity-80">
-                    {count === 1 ? "family" : "families"}
-                  </span>
+                <div className="flex-1">
+                  <div className="flex items-baseline gap-1 text-current">
+                    <span className="text-lg font-extrabold tabular-nums">{count}</span>
+                    <span className="text-[11px] font-semibold uppercase tracking-wide opacity-80">
+                      {count === 1 ? "family" : "families"}
+                    </span>
+                  </div>
+                  <p className="text-xs font-semibold text-current">{label}</p>
+                  <p className="text-[11px] leading-snug opacity-90">
+                    {localOnly ? "You shared this report." : legend}
+                  </p>
                 </div>
-                <p className="text-xs font-semibold text-current">{label}</p>
-                <p className="text-[11px] leading-snug opacity-80">
-                  {localOnly
-                    ? "You just shared this update — tap again to remove it."
-                    : legend}
-                </p>
               </div>
             );
           })}

@@ -23,6 +23,21 @@ export async function fetchIndoorPlayplaces() {
           imageUrl = match ? match[0] : p.imageUrl;
         }
 
+        const altNameRaw =
+          p.aka ||
+          p.AKA ||
+          p.altName ||
+          p.alternateName ||
+          p.alternate_name ||
+          p.alsoKnownAs ||
+          p.also_known_as ||
+          p.nickname ||
+          p.nickName ||
+          "";
+
+        const normalizedAka =
+          typeof altNameRaw === "string" ? altNameRaw.trim() : "";
+
         return {
           id: String(p.id ?? `${lat},${lng}`),
           name: p.name ?? "Unnamed Indoor Play Space",
@@ -65,6 +80,8 @@ export async function fetchIndoorPlayplaces() {
 
           // Required for logic
           indoorPlayArea: "yes",
+          akaName: normalizedAka,
+          aka: normalizedAka,
         };
       });
 

@@ -214,6 +214,20 @@ export default function ParkCard({ park, isSelected, onSelect, onLiveSignalsUpda
   )}`;
 
   const description = (park.description || park.notes || "").trim();
+  const alternateName = useMemo(() => {
+    const candidate =
+      park?.akaName ||
+      park?.aka ||
+      park?.AKA ||
+      park?.altName ||
+      park?.alternateName ||
+      park?.alternativeName ||
+      park?.alsoKnownAs ||
+      park?.nickname ||
+      park?.nickName ||
+      "";
+    return typeof candidate === "string" ? candidate.trim() : "";
+  }, [park]);
 
 /* ---------- Render ---------- */
   const concernCount = Number(counts?.concerns) || 0;
@@ -265,9 +279,17 @@ export default function ParkCard({ park, isSelected, onSelect, onLiveSignalsUpda
         className={`${DEFAULT_SECTION_STYLE} border-[#e7f0fb] bg-[#f6fbff] p-4 flex flex-col gap-4 order-1 md:order-none md:col-span-7 md:row-start-1`}
       >
         <div className="space-y-2">
-          <h2 className="text-xl font-extrabold text-[#0a2540] leading-tight">
-            {park.name}
-          </h2>
+          <div className="space-y-1">
+            <h2 className="text-xl font-extrabold text-[#0a2540] leading-tight">
+              {park.name}
+            </h2>
+            {alternateName && (
+              <div className="inline-flex items-center gap-1 rounded-full border border-[#fed7aa] bg-white/90 px-3 py-1 text-[11px] font-semibold text-[#f97316]">
+                <span>Also known as:</span>
+                <span className="text-[#ea580c]">{alternateName}</span>
+              </div>
+            )}
+          </div>
           <div className="space-y-1">
             <a
               href={googleLink}
@@ -922,7 +944,7 @@ function FamilyToolkit({ park, tips, shareFeedback, onShare }) {
         <div className="flex flex-col sm:flex-row gap-2">
           <ShareLinkButton
             icon="💬"
-            label="Share a tip about this park"
+            label="Share a tip about this place"
             href={buildTipFormUrl(park)}
             onShare={() =>
               onShare(
@@ -1041,7 +1063,7 @@ function ParkPhoto({ park, onShare }) {
   const locationLabel =
     park?.city || park?.state
       ? [park.city, park.state].filter(Boolean).join(", ")
-      : "PlayGrounded";
+      : "HeyPlayGrounded";
 
   return (
     <div className="flex flex-col gap-2">

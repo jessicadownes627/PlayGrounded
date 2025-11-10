@@ -22,7 +22,7 @@ export default function TeddySplash() {
       animate={{ opacity: fadeOut ? 0 : 1 }}
       transition={{ duration: 0.5, ease: "easeInOut" }}
       className="flex flex-col items-center justify-center h-screen bg-gradient-to-b from-sky-100 to-sky-300 text-[#0a2540] overflow-hidden relative"
-      aria-label="PlayGrounded splash screen"
+      aria-label="HeyPlayGrounded splash screen"
     >
       {/* ☀️ Animated Sun */}
       <motion.div
@@ -41,14 +41,16 @@ export default function TeddySplash() {
 
       {/* 🌳 Logo / App Name */}
       <motion.h1
-        aria-label="PlayGrounded App Title"
+        aria-label="HeyPlayGrounded App Title"
         initial={{ opacity: 0, scale: 0.7 }}
         animate={{ opacity: 1, scale: 1 }}
         transition={{ duration: 1.2, ease: "easeOut" }}
         className="text-4xl md:text-6xl font-bold tracking-tight mb-3 flex flex-col items-center"
       >
-        <span className="text-[#f06292] text-5xl md:text-7xl drop-shadow-lg">Hey!</span>
-        <span>PlayGrounded</span>
+        <span className="text-5xl md:text-7xl drop-shadow-lg flex items-center gap-2">
+          <span className="text-[#f06292]">Hey</span>
+          <span>PlayGrounded</span>
+        </span>
       </motion.h1>
 
       {/* 💬 Tagline */}
