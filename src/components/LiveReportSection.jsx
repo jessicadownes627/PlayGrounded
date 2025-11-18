@@ -11,7 +11,7 @@ import { refreshCrowdSense } from "../hooks/useCrowdSense.js";
 const PERSIST_MS = 15 * 60 * 1000;
 const BUTTON_COOLDOWN_MS = 10_000;
 const FLASH_DURATION_MS = 600;
-const STORAGE_PREFIX = "playgrounded::live::";
+const STORAGE_PREFIX = "goplaythere::live::";
 
 const BUTTONS = [
   { key: "clean", payload: "clean", icon: "🧼", label: "Clean", legend: "litter-free" },

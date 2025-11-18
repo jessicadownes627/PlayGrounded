@@ -1063,7 +1063,7 @@ function ParkPhoto({ park, onShare }) {
   const locationLabel =
     park?.city || park?.state
       ? [park.city, park.state].filter(Boolean).join(", ")
-      : "HeyPlayGrounded";
+      : "GoPlayThere";
 
   return (
     <div className="flex flex-col gap-2">

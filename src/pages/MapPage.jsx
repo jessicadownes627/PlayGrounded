@@ -36,7 +36,7 @@ export default function MapPage() {
   const initialPlayMode =
     location.state?.playMode ||
     (typeof window !== "undefined"
-      ? localStorage.getItem("heyplay_mode") || "outdoor"
+      ? localStorage.getItem("goplay_mode") || "outdoor"
       : "outdoor");
   const [playMode, setPlayMode] = useState(initialPlayMode); // indoor or outdoor
   const isIndoorMode = playMode === "indoor";
@@ -48,7 +48,7 @@ export default function MapPage() {
 
   useEffect(() => {
     if (typeof window !== "undefined") {
-      localStorage.setItem("heyplay_mode", playMode);
+      localStorage.setItem("goplay_mode", playMode);
     }
   }, [playMode]);
 
@@ -412,8 +412,9 @@ export default function MapPage() {
       {/* Header */}
       <header className="text-center pt-6 pb-3">
         <h1 className="text-3xl font-extrabold tracking-tight">
-          <span className="text-[#f06292]">Hey</span>
-          <span>PlayGrounded</span>
+          <span className="text-[#f06292]">Go</span>
+          <span className="text-[#f97316]">Play</span>
+          <span>There</span>
         </h1>
         <p className="text-sm opacity-80">
           {playMode === "indoor"
@@ -481,10 +482,10 @@ export default function MapPage() {
           </span>{" "}
           Email us at{" "}
           <a
-            href="mailto:heyplaygrounded@gmail.com"
+            href="mailto:goplaythere@gmail.com"
             className="inline-flex items-center gap-1 rounded-full bg-white px-3 py-1 text-xs font-semibold text-[#ea580c] shadow-sm transition hover:bg-[#ffe8d0]"
           >
-            heyplaygrounded@gmail.com
+            goplaythere@gmail.com
             <span aria-hidden="true">↗</span>
           </a>
           .
