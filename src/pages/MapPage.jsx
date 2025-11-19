@@ -412,8 +412,8 @@ export default function MapPage() {
       {/* Header */}
       <header className="text-center pt-6 pb-3">
         <h1 className="text-3xl font-extrabold tracking-tight">
-          <span className="text-[#f06292]">Go</span>
-          <span className="text-[#f97316]">Play</span>
+          <span className="text-[#facc15]">Go</span>
+          <span className="text-[#ec4899]">Play</span>
           <span>There</span>
         </h1>
         <p className="text-sm opacity-80">

@@ -62,8 +62,8 @@ export default function Welcome() {
       >
         <h1 className="text-[42px] font-extrabold leading-tight mb-2 flex flex-col items-center gap-1">
           <span className="text-[48px] drop-shadow flex items-center gap-1">
-            <span className="text-[#f06292]">Go</span>
-            <span className="text-[#f97316]">Play</span>
+            <span className="text-[#facc15]">Go</span>
+            <span className="text-[#ec4899]">Play</span>
             <span>There</span>
           </span>
         </h1>

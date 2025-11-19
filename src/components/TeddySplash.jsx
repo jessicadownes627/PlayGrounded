@@ -48,8 +48,8 @@ export default function TeddySplash() {
         className="text-4xl md:text-6xl font-bold tracking-tight mb-3 flex flex-col items-center"
       >
         <span className="text-5xl md:text-7xl drop-shadow-lg flex items-center gap-2">
-          <span className="text-[#f06292]">Go</span>
-          <span className="text-[#f97316]">Play</span>
+          <span className="text-[#facc15]">Go</span>
+          <span className="text-[#ec4899]">Play</span>
           <span>There</span>
         </span>
       </motion.h1>
