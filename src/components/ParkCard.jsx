@@ -149,6 +149,12 @@ export default function ParkCard({ park, isSelected, onSelect, onLiveSignalsUpda
     [filters]
   );
 
+  const indoorFlag = useMemo(() => {
+    if (!park?.indoorPlayArea) return false;
+    const normalized = String(park.indoorPlayArea).trim().toLowerCase();
+    return normalized === "yes" || normalized === "true";
+  }, [park?.indoorPlayArea]);
+
   const parkFeatureMap = useMemo(
     () => ({
       fenced: !!park?.fenced,
@@ -158,7 +164,7 @@ export default function ParkCard({ park, isSelected, onSelect, onLiveSignalsUpda
       parking: !!park?.parking,
       lighting: !!park?.lighting,
       adaptiveEquipment: !!park?.adaptiveEquipment,
-      indoorPlayArea: !!park?.indoorPlayArea,
+      indoorPlayArea: indoorFlag,
     }),
     [
       park?.fenced,
@@ -168,7 +174,7 @@ export default function ParkCard({ park, isSelected, onSelect, onLiveSignalsUpda
       park?.parking,
       park?.lighting,
       park?.adaptiveEquipment,
-      park?.indoorPlayArea,
+      indoorFlag,
     ]
   );
 
@@ -412,9 +418,11 @@ export default function ParkCard({ park, isSelected, onSelect, onLiveSignalsUpda
         <Section title="Extra amenities">
           <BadgeRow items={extraAmenities} empty="More details coming soon" color="blue" />
         </Section>
-        <Section title="Needs improvement">
-          <BadgeRow items={needs} empty="Nothing missing 🎉" color="rose" />
-        </Section>
+        {!indoorFlag && (
+          <Section title="Needs improvement">
+            <BadgeRow items={needs} empty="Nothing missing 🎉" color="rose" />
+          </Section>
+        )}
         <div className="mt-4 space-y-2">
           <p className="text-sm font-semibold text-[#0a2540]">
             💛 {matchScore}% match — {matchText}
